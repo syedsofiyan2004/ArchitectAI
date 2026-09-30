@@ -1,0 +1,24 @@
+{
+  "name": "@architectai/cli",
+  "version": "0.1.0",
+  "private": true,
+  "main": "./dist/index.js",
+  "bin": {
+    "architectai": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --noEmit",
+    "skeleton": "tsx ./src/index.ts skeleton"
+  },
+  "dependencies": {
+    "@architectai/domain": "*",
+    "@architectai/knowledge": "*",
+    "@architectai/application": "*",
+    "@architectai/verification": "*",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.3"
+  }
+}

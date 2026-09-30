@@ -1,0 +1,12 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/domain" },
+    { "path": "./packages/application" },
+    { "path": "./packages/knowledge" },
+    { "path": "./packages/providers" },
+    { "path": "./packages/verification" },
+    { "path": "./packages/evals" },
+    { "path": "./apps/cli" }
+  ]
+}
