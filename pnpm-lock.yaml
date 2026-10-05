@@ -166,6 +166,12 @@ importers:
 
   .:
     devDependencies:
+      '@architectai/domain':
+        specifier: workspace:*
+        version: link:packages/domain
+      '@architectai/knowledge':
+        specifier: workspace:*
+        version: link:packages/knowledge
       '@types/node':
         specifier: ^22.13.9
         version: 22.20.5
