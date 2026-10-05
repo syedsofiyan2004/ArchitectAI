@@ -1405,3 +1405,14 @@ body {
 .footer-links {
   color: var(--text-muted);
 }
+
+.badge-ungrounded {
+  font-size: 0.725rem;
+  background-color: rgba(245, 158, 11, 0.15);
+  color: #FBBF24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  display: inline-block;
+}
+

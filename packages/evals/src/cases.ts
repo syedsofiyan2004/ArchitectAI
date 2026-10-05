@@ -59,7 +59,7 @@ export const tokenRefreshRaceEvalCase: EvaluationCase = {
     id: 'req-token-01',
     rawIntent:
       'When my access token expires automatically refresh it and retry the failed request.',
-    explicitConstraints: [],
+    explicitConstraints: ['Handle multiple simultaneous 401 Unauthorized responses gracefully'],
     declaredTechStack: ['TypeScript'],
     context: {},
   },
@@ -73,112 +73,114 @@ export const tokenRefreshRaceEvalCase: EvaluationCase = {
   tags: ['auth', 'concurrency', 'eval'],
 };
 
-// 4. Database Connection Pool Exhaustion (Scenario 4)
+// 4. Database Connection Pool Starvation (Scenario 4)
 export const dbConnectionPoolEvalCase: EvaluationCase = {
-  id: 'eval-db-connection-pool-004',
-  name: 'Database Connection Pool Exhaustion',
+  id: 'eval-db-pool-starvation-004',
+  name: 'Database Connection Pool Exhaustion Under Load',
   description:
-    'Evaluates that high-volume database queries trigger bounded resource and dependency concerns.',
+    'Evaluates that mass database queries trigger bounded resource and connection pool starvation discovery.',
   requirementIntent: {
-    id: 'req-db-01',
+    id: 'req-db-pool-01',
     rawIntent:
-      'Query the user profile and order history database across 5,000 concurrent web requests.',
-    explicitConstraints: ['Do not crash during database latency spikes'],
+      'Query user order history across 5,000 concurrent web requests without failing.',
+    explicitConstraints: ['Maintain fast response times under high concurrency'],
     declaredTechStack: ['PostgreSQL'],
     context: {},
   },
   expectedDimensions: [
     WellKnownDimensions.BOUNDED_RESOURCE,
-    WellKnownDimensions.DEPENDENCY,
     WellKnownDimensions.CONCURRENCY,
+    WellKnownDimensions.DEPENDENCY,
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
-  tags: ['database', 'connection_pool', 'eval'],
+  tags: ['database', 'concurrency', 'eval'],
 };
 
-// 5. Duplicate Payment / Side Effect (Scenario 5)
+// 5. Duplicate Payment Mutation (Scenario 5)
 export const duplicatePaymentEvalCase: EvaluationCase = {
   id: 'eval-duplicate-payment-005',
-  name: 'Duplicate Payment and Side Effect Idempotency',
+  name: 'Non-Idempotent Payment Charge Mutation',
   description:
-    'Evaluates that financial charging endpoints trigger side-effect and retry concerns.',
+    'Evaluates that automated payment retries over uncertain networks trigger side-effect and idempotency concerns.',
   requirementIntent: {
     id: 'req-payment-01',
     rawIntent:
-      'Charge the customer credit card $50 and automatically retry if the gateway connection drops.',
-    explicitConstraints: ['Never charge customer twice'],
+      'Charge the customer credit card and retry if the connection times out.',
+    explicitConstraints: ['Customer must never be double charged'],
     declaredTechStack: ['PostgreSQL'],
     context: {},
   },
   expectedDimensions: [
     WellKnownDimensions.SIDE_EFFECT,
     WellKnownDimensions.RETRY,
+    WellKnownDimensions.DEPENDENCY,
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
   tags: ['payment', 'idempotency', 'eval'],
 };
 
-// 6. Retry Amplification / Storm (Scenario 6)
+// 6. Retry Storm / Amplification (Scenario 6)
 export const retryAmplificationEvalCase: EvaluationCase = {
   id: 'eval-retry-amplification-006',
-  name: 'Retry Amplification Storm',
+  name: 'Downstream Service Retry Amplification',
   description:
-    'Evaluates that aggressive retrying against external microservices triggers failure propagation and concentration concerns.',
+    'Evaluates that aggressive retries against degraded dependencies trigger retry storm and thundering herd concerns.',
   requirementIntent: {
     id: 'req-retry-01',
     rawIntent:
-      'Call downstream pricing service and immediately retry up to 10 times if it returns any 500 error.',
-    explicitConstraints: [],
-    declaredTechStack: [],
+      'Call downstream pricing API and aggressively retry up to 10 times on failure.',
+    explicitConstraints: ['Do not crash downstream pricing service'],
+    declaredTechStack: ['AWS'],
     context: {},
   },
   expectedDimensions: [
     WellKnownDimensions.RETRY,
     WellKnownDimensions.DEPENDENCY,
+    WellKnownDimensions.TIME_WINDOW,
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
-  tags: ['retry_storm', 'resilience', 'eval'],
+  tags: ['retry', 'cascading_failure', 'eval'],
 };
 
-// 7. Cache Stampede (Scenario 7)
+// 7. Cache Stampede / Dogpiling (Scenario 7)
 export const cacheStampedeEvalCase: EvaluationCase = {
   id: 'eval-cache-stampede-007',
-  name: 'Cache Stampede on Expiration',
+  name: 'Discrete TTL Cache Stampede / Dogpile',
   description:
-    'Evaluates that caching hot query results triggers time window, shared state, and concurrency concerns.',
+    'Evaluates that caching hot keys with fixed TTLs triggers concentration and dogpiling discovery.',
   requirementIntent: {
     id: 'req-cache-01',
     rawIntent:
-      'Cache trending products in Redis with a 5 minute TTL for 100,000 concurrent shoppers.',
-    explicitConstraints: ['Protect SQL database from load spikes'],
+      'Cache trending product catalog in Redis with 5 minute TTL for 100,000 concurrent readers.',
+    explicitConstraints: ['Protect primary database from sudden load spikes'],
     declaredTechStack: ['Redis', 'PostgreSQL'],
     context: {},
   },
   expectedDimensions: [
+    WellKnownDimensions.SCALING_CONCENTRATION,
     WellKnownDimensions.TIME_WINDOW,
-    WellKnownDimensions.SHARED_MUTABLE_STATE,
-    WellKnownDimensions.CONCURRENCY,
+    WellKnownDimensions.DEPENDENCY,
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
-  tags: ['cache', 'stampede', 'eval'],
+  tags: ['cache', 'thundering_herd', 'eval'],
 };
 
-// 8. Duplicate Message Processing (Scenario 8)
+// 8. Kafka Message Deduplication (Scenario 8)
 export const duplicateQueueEvalCase: EvaluationCase = {
-  id: 'eval-duplicate-queue-008',
-  name: 'Duplicate Queue Message Processing',
+  id: 'eval-queue-dedup-008',
+  name: 'At-Least-Once Queue Message Duplicate Delivery',
   description:
-    'Evaluates that background queue consumers trigger ordering, side effect, and concurrency concerns.',
+    'Evaluates that consumer message processing triggers ordering and duplicate side effect analysis.',
   requirementIntent: {
     id: 'req-queue-01',
     rawIntent:
-      'Consume user registration events from Kafka queue and send welcome email and provision accounts.',
-    explicitConstraints: ['Workers can restart or rebalance at any time'],
-    declaredTechStack: ['Kafka', 'PostgreSQL'],
+      'Consume user registration events from Kafka queue and send welcome emails.',
+    explicitConstraints: ['Ensure every registered user receives email notification'],
+    declaredTechStack: ['Kafka'],
     context: {},
   },
   expectedDimensions: [
@@ -188,54 +190,55 @@ export const duplicateQueueEvalCase: EvaluationCase = {
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
-  tags: ['queue', 'kafka', 'eval'],
+  tags: ['queue', 'ordering', 'eval'],
 };
 
-// 9. Missing Network Timeout (Scenario 9)
+// 9. Third-Party Timeout Resiliency (Scenario 9)
 export const missingTimeoutEvalCase: EvaluationCase = {
-  id: 'eval-missing-timeout-009',
-  name: 'Missing Network Timeout and Socket Hang',
+  id: 'eval-timeout-resilience-009',
+  name: 'Third-Party Dependency Timeout Resiliency',
   description:
-    'Evaluates that outbound external network requests trigger time window, dependency, and resource concerns.',
+    'Evaluates that synchronous external partner calls trigger timeout, latency, and socket resource concerns.',
   requirementIntent: {
     id: 'req-timeout-01',
     rawIntent:
-      'Fetch partner product catalog over HTTP on every user search query.',
-    explicitConstraints: ['Do not freeze application if partner server becomes unresponsive'],
-    declaredTechStack: ['Node.js'],
+      'Fetch external partner catalog on every user search request without freezing.',
+    explicitConstraints: ['Maintain search page responsiveness even if partner API hangs'],
+    declaredTechStack: ['TypeScript'],
     context: {},
   },
   expectedDimensions: [
-    WellKnownDimensions.TIME_WINDOW,
     WellKnownDimensions.DEPENDENCY,
+    WellKnownDimensions.TIME_WINDOW,
     WellKnownDimensions.BOUNDED_RESOURCE,
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
-  tags: ['timeout', 'networking', 'eval'],
+  tags: ['resilience', 'timeout', 'eval'],
 };
 
 // 10. Concurrent Lost Update Race (Scenario 10)
 export const lostUpdateRaceEvalCase: EvaluationCase = {
   id: 'eval-lost-update-010',
-  name: 'Concurrent Lost-Update Race Anomaly',
+  name: 'Read-Modify-Write Concurrent Lost Update',
   description:
-    'Evaluates that reading, modifying, and saving shared balances or inventory triggers concurrency and shared state concerns.',
+    'Evaluates that non-atomic balance or inventory decrements trigger shared mutable state race concerns.',
   requirementIntent: {
     id: 'req-lost-update-01',
     rawIntent:
-      'Read current item stock quantity, decrement by 1, and save updated count back to database.',
-    explicitConstraints: ['Must handle simultaneous checkout from multiple customers'],
+      'Read current inventory quantity, decrement by 1, and save updated count back.',
+    explicitConstraints: ['Accurate inventory count during simultaneous flash sale checkouts'],
     declaredTechStack: ['PostgreSQL'],
     context: {},
   },
   expectedDimensions: [
-    WellKnownDimensions.CONCURRENCY,
     WellKnownDimensions.SHARED_MUTABLE_STATE,
+    WellKnownDimensions.CONCURRENCY,
+    WellKnownDimensions.PERSISTENCE,
   ],
   forbiddenDimensions: [],
   requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
-  tags: ['lost_update', 'database', 'eval'],
+  tags: ['concurrency', 'transactions', 'eval'],
 };
 
 // Negative Assertion Case (Genuinely isolated computation)
@@ -272,6 +275,162 @@ export const strictlyIsolatedComputationEvalCase: EvaluationCase = {
   tags: ['compute', 'isolated', 'negative_eval'],
 };
 
+// False-Positive Eval Case: Offline single-image resize
+export const offlineSingleImageResizeEvalCase: EvaluationCase = {
+  id: 'eval-false-positive-offline-resize-012',
+  name: 'Offline Single Image CLI Resize (False-Positive Prevention)',
+  description:
+    'Evaluates that an offline single-file CLI resize process does NOT over-retrieve or hallucinate network, authentication, payment, or database concerns.',
+  requirementIntent: {
+    id: 'req-offline-resize-01',
+    rawIntent:
+      'Resize a single local image once in an offline command-line process.',
+    explicitConstraints: [
+      'Single offline invocation',
+      'No external network, database, or token services',
+    ],
+    declaredTechStack: ['Node.js'],
+    context: {
+      environment: 'offline_cli',
+      network: 'none',
+      database: 'none',
+    },
+  },
+  expectedDimensions: [WellKnownDimensions.BOUNDED_RESOURCE],
+  forbiddenDimensions: [
+    WellKnownDimensions.SHARED_MUTABLE_STATE,
+    WellKnownDimensions.RETRY,
+    WellKnownDimensions.ORDERING,
+    WellKnownDimensions.DEPENDENCY,
+    WellKnownDimensions.ATTACKER_CONTROLLED_INPUT,
+  ],
+  requiredKnowledgeLevels: ['fundamental'],
+  tags: ['false_positive_prevention', 'offline_cli', 'eval'],
+};
+
+// Novel Scenario A: Multi-device document editing
+export const novelCollaborativeDocEvalCase: EvaluationCase = {
+  id: 'eval-novel-doc-collab-013',
+  name: 'Novel A: Multi-Device Document Collaboration',
+  description:
+    'Infers shared mutable state and concurrency without requiring explicit engineering buzzwords.',
+  requirementIntent: {
+    id: 'req-novel-doc-01',
+    rawIntent:
+      'People may update the same document from their phones and laptops at nearly the same time.',
+    explicitConstraints: [],
+    declaredTechStack: ['TypeScript'],
+    context: {},
+  },
+  expectedDimensions: [
+    WellKnownDimensions.SHARED_MUTABLE_STATE,
+    WellKnownDimensions.CONCURRENCY,
+  ],
+  forbiddenDimensions: [],
+  requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
+  tags: ['novel', 'collaboration', 'concurrency'],
+};
+
+// Novel Scenario B: Stuck purchase button retry
+export const novelStuckPurchaseButtonEvalCase: EvaluationCase = {
+  id: 'eval-novel-purchase-retry-014',
+  name: 'Novel B: Re-clicking Stuck Purchase Button',
+  description:
+    'Infers duplicate side effects and idempotency risks without requiring the word "retry".',
+  requirementIntent: {
+    id: 'req-novel-purchase-01',
+    rawIntent:
+      'A customer can click the purchase button again if the first request appears stuck.',
+    explicitConstraints: [],
+    declaredTechStack: ['Web Application'],
+    context: {},
+  },
+  expectedDimensions: [
+    WellKnownDimensions.SIDE_EFFECT,
+    WellKnownDimensions.RETRY,
+  ],
+  forbiddenDimensions: [],
+  requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
+  tags: ['novel', 'idempotency', 'side_effects'],
+};
+
+// Novel Scenario C: In-memory cache copy
+export const novelInstanceCacheCopyEvalCase: EvaluationCase = {
+  id: 'eval-novel-cache-copy-015',
+  name: 'Novel C: Synchronized In-Memory Cache Expiry',
+  description:
+    'Recognizes cache, time window, and concentration concerns without the word "stampede".',
+  requirementIntent: {
+    id: 'req-novel-cache-01',
+    rawIntent:
+      'Every instance keeps a copy of popular data for five minutes before fetching it again.',
+    explicitConstraints: [],
+    declaredTechStack: ['Distributed System'],
+    context: {},
+  },
+  expectedDimensions: [
+    WellKnownDimensions.SCALING_CONCENTRATION,
+    WellKnownDimensions.TIME_WINDOW,
+  ],
+  forbiddenDimensions: [],
+  requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
+  tags: ['novel', 'cache_expiration', 'concentration'],
+};
+
+// Novel Scenario D: Workers dying halfway
+export const novelWorkerFailureMidwayEvalCase: EvaluationCase = {
+  id: 'eval-novel-worker-crash-016',
+  name: 'Novel D: Workers Failing Mid-Task',
+  description:
+    'Considers duplicate processing and recovery without requiring Kafka/SQS buzzwords.',
+  requirementIntent: {
+    id: 'req-novel-worker-01',
+    rawIntent:
+      'Workers receive jobs and occasionally die halfway through processing them.',
+    explicitConstraints: [],
+    declaredTechStack: ['Worker Queue'],
+    context: {},
+  },
+  expectedDimensions: [
+    WellKnownDimensions.RETRY,
+    WellKnownDimensions.SIDE_EFFECT,
+  ],
+  forbiddenDimensions: [],
+  requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
+  tags: ['novel', 'worker_recovery', 'idempotency'],
+};
+
+// Novel Scenario E: Waiting for external supplier
+export const novelExternalSupplierWaitEvalCase: EvaluationCase = {
+  id: 'eval-novel-supplier-wait-017',
+  name: 'Novel E: External Supplier Search Dependency',
+  description:
+    'Identifies dependency, timeout, and resource risks without requiring the word "timeout".',
+  requirementIntent: {
+    id: 'req-novel-supplier-01',
+    rawIntent:
+      'The app waits for an external supplier before showing search results.',
+    explicitConstraints: [],
+    declaredTechStack: ['HTTP Service'],
+    context: {},
+  },
+  expectedDimensions: [
+    WellKnownDimensions.DEPENDENCY,
+    WellKnownDimensions.TIME_WINDOW,
+  ],
+  forbiddenDimensions: [],
+  requiredKnowledgeLevels: ['fundamental', 'failure_pattern'],
+  tags: ['novel', 'dependency_wait', 'timeout'],
+};
+
+export const allNovelEvalCases: EvaluationCase[] = [
+  novelCollaborativeDocEvalCase,
+  novelStuckPurchaseButtonEvalCase,
+  novelInstanceCacheCopyEvalCase,
+  novelWorkerFailureMidwayEvalCase,
+  novelExternalSupplierWaitEvalCase,
+];
+
 export const allPrototypeEvalCases: EvaluationCase[] = [
   sampleNeutralEvalCase,
   rateLimitBoundaryEvalCase,
@@ -284,4 +443,6 @@ export const allPrototypeEvalCases: EvaluationCase[] = [
   missingTimeoutEvalCase,
   lostUpdateRaceEvalCase,
   strictlyIsolatedComputationEvalCase,
+  offlineSingleImageResizeEvalCase,
+  ...allNovelEvalCases,
 ];

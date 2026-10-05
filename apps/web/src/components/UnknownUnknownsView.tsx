@@ -92,7 +92,13 @@ export const UnknownUnknownsView: React.FC<UnknownUnknownsViewProps> = ({
               )}
             </div>
 
-            {concern.supportingKnowledgeIds.length > 0 && (
+            {concern.groundingStatus === 'ungrounded_model_discovery' ? (
+              <div className="supporting-knowledge ungrounded">
+                <span className="badge-ungrounded font-mono">
+                  ⚠ Model-discovered — authoritative grounding not yet available
+                </span>
+              </div>
+            ) : concern.supportingKnowledgeIds.length > 0 ? (
               <div className="supporting-knowledge">
                 <span className="knowledge-label">Grounded In Knowledge IDs:</span>
                 <div className="knowledge-tags">
@@ -103,7 +109,7 @@ export const UnknownUnknownsView: React.FC<UnknownUnknownsViewProps> = ({
                   ))}
                 </div>
               </div>
-            )}
+            ) : null}
           </div>
         ))}
       </div>

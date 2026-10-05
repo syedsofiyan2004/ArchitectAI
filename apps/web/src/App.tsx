@@ -76,6 +76,7 @@ export function App() {
         stages: responseData.stages,
         dimensionsDetected: responseData.dimensionsDetected,
         mode: responseData.mode,
+        decomposition: responseData.decomposition,
       });
     } catch (err: unknown) {
       console.error('Analysis error:', err);
@@ -199,6 +200,12 @@ export function App() {
                           {result.contract.decisions.length} Decisions
                         </span>
                       </div>
+                      {result.decomposition && (
+                        <div className="meta-item" style={{ gridColumn: 'span 2' }}>
+                          <span className="meta-key">Semantic Decomposition:</span>
+                          <span className="meta-val">{result.decomposition.summary}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
 

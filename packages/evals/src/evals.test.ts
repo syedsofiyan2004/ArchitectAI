@@ -13,10 +13,12 @@ import {
   DeterministicEvalRunner,
   sampleNeutralEvalCase,
   strictlyIsolatedComputationEvalCase,
+  offlineSingleImageResizeEvalCase,
+  allNovelEvalCases,
   allPrototypeEvalCases,
 } from './index.js';
 
-describe('DeterministicEvalRunner & Prototype Evals (Milestone 1)', () => {
+describe('DeterministicEvalRunner & Prototype Evals (Milestone 1B)', () => {
   const runner = new DeterministicEvalRunner();
   let repo: InMemoryKnowledgeRepository;
   let useCase: AnalyzeArchitectureUseCase;
@@ -46,9 +48,16 @@ describe('DeterministicEvalRunner & Prototype Evals (Milestone 1)', () => {
     expect(result.missingRequiredKnowledgeLevels).toHaveLength(0);
   });
 
-  it('evaluates all 10 prototype scenarios through the live pipeline', async () => {
+  it('evaluates all 10 prototype scenarios through the live semantic pipeline', async () => {
     for (const evalCase of allPrototypeEvalCases) {
-      if (evalCase.id === strictlyIsolatedComputationEvalCase.id) continue;
+      // Skip isolated/offline negative test cases from the standard positive loop
+      if (
+        evalCase.id === strictlyIsolatedComputationEvalCase.id ||
+        evalCase.id === offlineSingleImageResizeEvalCase.id ||
+        allNovelEvalCases.some((n) => n.id === evalCase.id)
+      ) {
+        continue;
+      }
 
       const output = await useCase.execute({
         rawIntent: evalCase.requirementIntent.rawIntent,
@@ -61,13 +70,70 @@ describe('DeterministicEvalRunner & Prototype Evals (Milestone 1)', () => {
 
       expect(
         result.passed,
-        `Eval case failed: ${evalCase.name} (${evalCase.id}). Failures: ${result.failureReasons.join(', ')}`
+        `Eval case failed: ${evalCase.name} (${evalCase.id}). Failures: ${result.failureReasons.join(
+          ', '
+        )}`
       ).toBe(true);
 
       expect(result.contractConformsToSchema).toBe(true);
       expect(result.missingExpectedDimensions).toHaveLength(0);
       expect(result.missingRequiredKnowledgeLevels).toHaveLength(0);
     }
+  });
+
+  describe('Novel / Paraphrase Requirements Evaluation (Requirement 8)', () => {
+    it('evaluates all 5 novel scenarios (Novel A-E) through the semantic reasoning pipeline', async () => {
+      for (const novelCase of allNovelEvalCases) {
+        const output = await useCase.execute({
+          rawIntent: novelCase.requirementIntent.rawIntent,
+          explicitConstraints: novelCase.requirementIntent.explicitConstraints,
+          declaredTechStack: novelCase.requirementIntent.declaredTechStack,
+          context: novelCase.requirementIntent.context,
+        });
+
+        const result = await runner.evaluateContract(novelCase, output.contract, repo);
+
+        expect(
+          result.passed,
+          `Novel case failed: ${novelCase.name} (${novelCase.id}). Failures: ${result.failureReasons.join(
+            ', '
+          )}`
+        ).toBe(true);
+
+        expect(result.contractConformsToSchema).toBe(true);
+        expect(result.missingExpectedDimensions).toHaveLength(0);
+        expect(result.missingRequiredKnowledgeLevels).toHaveLength(0);
+      }
+    });
+  });
+
+  describe('False-Positive Prevention Evaluation (Requirement 9)', () => {
+    it('evaluates offline image resize and confirms zero over-retrieved concerns or forbidden dimensions', async () => {
+      const output = await useCase.execute({
+        rawIntent: offlineSingleImageResizeEvalCase.requirementIntent.rawIntent,
+        explicitConstraints: offlineSingleImageResizeEvalCase.requirementIntent.explicitConstraints,
+        declaredTechStack: offlineSingleImageResizeEvalCase.requirementIntent.declaredTechStack,
+        context: offlineSingleImageResizeEvalCase.requirementIntent.context,
+      });
+
+      const result = await runner.evaluateContract(
+        offlineSingleImageResizeEvalCase,
+        output.contract,
+        repo
+      );
+
+      expect(result.passed).toBe(true);
+      expect(result.missingExpectedDimensions).toHaveLength(0);
+      expect(result.hallucinatedForbiddenDimensions).toHaveLength(0);
+
+      // Verify specific unrelated failure patterns were filtered out by Phase B
+      const titles = output.contract.discoveredConcerns.map((c) => c.title.toLowerCase());
+      expect(titles.some((t) => t.includes('token refresh'))).toBe(false);
+      expect(titles.some((t) => t.includes('rate limit'))).toBe(false);
+      expect(titles.some((t) => t.includes('connection pool'))).toBe(false);
+      expect(titles.some((t) => t.includes('payment'))).toBe(false);
+      expect(titles.some((t) => t.includes('kafka'))).toBe(false);
+    });
   });
 
   describe('Negative Eval Assertions', () => {
@@ -246,4 +312,3 @@ describe('DeterministicEvalRunner & Prototype Evals (Milestone 1)', () => {
     });
   });
 });
-

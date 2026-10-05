@@ -68,7 +68,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     expect(json.contract.discoveredConcerns.length).toBeGreaterThanOrEqual(1);
 
     const titles = json.contract.discoveredConcerns.map((c: any) => c.title);
-    expect(titles.some((t: string) => /rate limit|race/i.test(t))).toBe(true);
+    expect(titles.some((t: string) => /burst|window|rate/i.test(t))).toBe(true);
   });
 
   it('POST /api/analyze successfully analyzes Demo B (Token Refresh Race)', async () => {

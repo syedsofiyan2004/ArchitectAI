@@ -32,7 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ config }) => {
               <span className="status-dot"></span>
               <span className="status-label">Mode:</span>
               <span className="status-value font-mono">
-                {config.mode === 'remote-model' ? `Remote (${config.modelName})` : 'Deterministic Demo'}
+                {config.mode === 'remote-model' ? `Model Reasoning (${config.modelName})` : 'Deterministic Demonstration'}
               </span>
             </div>
             <div className="status-pill secondary">

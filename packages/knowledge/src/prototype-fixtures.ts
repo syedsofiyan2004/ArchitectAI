@@ -195,6 +195,7 @@ export const tokenRefreshRacePattern: EngineeringKnowledgeItem = {
     WellKnownDimensions.CONCURRENCY,
     WellKnownDimensions.SHARED_MUTABLE_STATE,
     WellKnownDimensions.TRUST_BOUNDARY,
+    WellKnownDimensions.RETRY,
   ],
   triggers: [
     'parallel HTTP requests executing when access token expires',
@@ -466,6 +467,7 @@ export const duplicatePaymentRetryPattern: EngineeringKnowledgeItem = {
   dimensions: [
     WellKnownDimensions.SIDE_EFFECT,
     WellKnownDimensions.RETRY,
+    WellKnownDimensions.DEPENDENCY,
   ],
   triggers: [
     'network timeout during checkout or payment processing',
@@ -602,6 +604,7 @@ export const retryAmplificationPattern: EngineeringKnowledgeItem = {
     WellKnownDimensions.RETRY,
     WellKnownDimensions.SCALING_CONCENTRATION,
     WellKnownDimensions.DEPENDENCY,
+    WellKnownDimensions.TIME_WINDOW,
   ],
   triggers: [
     'immediate retries without exponential backoff or jitter',
@@ -1125,6 +1128,7 @@ export const lostUpdateRacePattern: EngineeringKnowledgeItem = {
   dimensions: [
     WellKnownDimensions.CONCURRENCY,
     WellKnownDimensions.SHARED_MUTABLE_STATE,
+    WellKnownDimensions.PERSISTENCE,
   ],
   triggers: [
     'application logic reading record, modifying in memory, then saving back to database',

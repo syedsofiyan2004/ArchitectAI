@@ -3,11 +3,14 @@ import {
   EngineeringContract,
   EngineeringContractSchema,
   EngineeringDimension,
-  WellKnownDimensions,
   ConcernCandidate,
   ArchitectureDecision,
   EngineeringInvariant,
   VerificationSpec,
+  RequirementDecomposition,
+  RequirementDecompositionSchema,
+  ConcernRelevanceEvaluation,
+  ConcernRelevanceEvaluationSchema,
 } from '@architectai/domain';
 import {
   KnowledgeRepository,
@@ -42,131 +45,19 @@ export interface AnalyzeArchitectureOutput {
   stages: AnalysisStageLog[];
   dimensionsDetected: EngineeringDimension[];
   mode: 'remote-model' | 'deterministic-demo';
-}
-
-/**
- * Universal Dimension Extractor.
- * Reasons across physical and systems engineering primitives rather than keyword feature matching.
- */
-function extractEngineeringDimensions(
-  intent: string,
-  constraints: string[] = [],
-  context: Record<string, string> = {}
-): EngineeringDimension[] {
-  const combined = `${intent} ${constraints.join(' ')} ${Object.values(context).join(' ')}`.toLowerCase();
-  const dimensions = new Set<EngineeringDimension>();
-
-  // Bounded Resource / Capacity limits
-  if (
-    /limit|rate|burst|capacity|quota|buffer|memory|cpu|exhaust|pool|scale|max|heavy|large|file|image|high|throughput|qps|rps|load/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.BOUNDED_RESOURCE);
-  }
-
-  // Concurrency & Multithreading
-  if (
-    /parallel|concurrent|thread|async|simultaneous|race|batch|multiple|clients|lock|mutex|worker|token|refresh|api|request/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.CONCURRENCY);
-  }
-
-  // Time, Windows, Expiration & Latency
-  if (
-    /minute|second|hour|window|time|expire|ttl|period|latency|delay|timeout|interval|clock|deadline|duration/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.TIME_WINDOW);
-  }
-
-  // Shared Mutable State & Atomic Coordination
-  if (
-    /token|refresh|session|counter|state|cache|balance|shared|auth|status|inventory|stock|quantity|count|decrement|increment|lock|coordinat/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.SHARED_MUTABLE_STATE);
-  }
-
-  // Side Effects & Non-Idempotent Mutations
-  if (
-    /payment|charge|order|mutate|send|deliver|produce|email|create|insert|transfer|bill|deduct/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.SIDE_EFFECT);
-  }
-
-  // Retries & Error Recovery
-  if (
-    /retry|replay|fail|error|recover|backoff|transient|resilience|re-issue/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.RETRY);
-  }
-
-  // Dependencies & External Call Boundaries
-  if (
-    /database|db|postgres|redis|sql|api|service|upstream|downstream|dependency|third-party|gateway|http|network|queue|broker|kafka|sqs/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.DEPENDENCY);
-  }
-
-  // Ordering & Delivery Guarantees
-  if (
-    /queue|message|order|stream|sequence|event|log|consume|publish|kafka|rabbit/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.ORDERING);
-  }
-
-  // Persistence & Storage Durability
-  if (
-    /persist|store|db|database|table|record|postgres|mysql|disk|save/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.PERSISTENCE);
-  }
-
-  // Scaling Concentration & Thundering Herd
-  if (
-    /many|mass|burst|thousand|spike|hot|stampede|herd|fan-out|fan-in/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.SCALING_CONCENTRATION);
-  }
-
-  // Trust Boundaries & Security
-  if (
-    /user|auth|token|credential|key|secret|untrusted|client|tenant|permission/i.test(
-      combined
-    )
-  ) {
-    dimensions.add(WellKnownDimensions.TRUST_BOUNDARY);
-  }
-
-  // Default to bounded resource and concurrency if no dimension matched
-  if (dimensions.size === 0) {
-    dimensions.add(WellKnownDimensions.BOUNDED_RESOURCE);
-    dimensions.add(WellKnownDimensions.CONCURRENCY);
-  }
-
-  return Array.from(dimensions);
+  decomposition: RequirementDecomposition;
 }
 
 /**
  * Core Use Case: AnalyzeArchitectureUseCase
- * Executes the complete 7-stage architectural discovery and contract assembly pipeline.
+ * Implements the 7-stage architectural discovery pipeline driven by real semantic reasoning:
+ * 1. Semantic Requirement Decomposition (Phase A via ProviderAdapter)
+ * 2. Mapping Inferred Engineering Dimensions
+ * 3. Broad Candidate Knowledge Retrieval (L1, L2, L3)
+ * 4. Semantic Concern Relevance Evaluation (Phase B via ProviderAdapter)
+ * 5. Grounded Architecture Decisions Synthesis
+ * 6. Verification Plan Formulation
+ * 7. Canonical Engineering Contract Schema Validation
  */
 export class AnalyzeArchitectureUseCase {
   constructor(
@@ -186,8 +77,8 @@ export class AnalyzeArchitectureUseCase {
       });
     };
 
-    // Stage 1: Understanding requirement
-    logStage(1, 'Understanding requirement', 'Decomposing natural-language intent and constraints.');
+    // Stage 1: Semantic Requirement Decomposition (Phase A)
+    logStage(1, 'Understanding requirement', 'Decomposing natural-language intent into semantic entities.');
     const normalizedContext: Record<string, string> = {};
     if (input.context) {
       for (const [key, val] of Object.entries(input.context)) {
@@ -195,7 +86,7 @@ export class AnalyzeArchitectureUseCase {
       }
     }
 
-    const techStack: string[] = [
+    const declaredTech: string[] = [
       ...(input.declaredTechStack || []),
       ...(input.context?.language ? [input.context.language] : []),
       ...(input.context?.framework ? [input.context.framework] : []),
@@ -207,24 +98,45 @@ export class AnalyzeArchitectureUseCase {
       id: `req-${Date.now()}`,
       rawIntent: input.rawIntent.trim(),
       explicitConstraints: input.explicitConstraints || [],
-      declaredTechStack: Array.from(new Set(techStack)),
+      declaredTechStack: Array.from(new Set(declaredTech)),
       context: normalizedContext,
       createdAt: new Date().toISOString(),
     };
 
-    // Stage 2: Mapping engineering dimensions
-    logStage(2, 'Mapping engineering dimensions', 'Analyzing universal systems primitives.');
-    const dimensions = extractEngineeringDimensions(
-      requirement.rawIntent,
-      requirement.explicitConstraints,
-      requirement.context
-    );
+    // Invoke ProviderAdapter for Phase A: Semantic Decomposition
+    const decompositionResponse = await this.provider.generateStructured<RequirementDecomposition>({
+      messages: [
+        {
+          role: 'system',
+          content: `You are the ArchitectAI Systems Engineering Reasoner.
+Perform structured semantic decomposition of the user's software requirement.
+Analyze operations, actors, state, resources, concurrency potential, timing semantics, ordering, persistence, trust boundaries, failure-sensitive operations, and scale signals.
+Infer all applicable physical systems engineering dimensions (such as bounded_resource, concurrency, time_window, shared_mutable_state, side_effect, retry, dependency, ordering, persistence, scaling_concentration, trust_boundary, attacker_controlled_input).
+DO NOT rely on keyword matching. Reason from physical and systems engineering principles.`,
+        },
+        {
+          role: 'user',
+          content: `Requirement Intent: ${requirement.rawIntent}
+Explicit Constraints: ${requirement.explicitConstraints.join('; ') || 'None'}
+Declared Tech Stack: ${requirement.declaredTechStack.join(', ') || 'None'}
+Context: ${JSON.stringify(requirement.context)}`,
+        },
+      ],
+      schema: RequirementDecompositionSchema,
+      schemaName: 'RequirementDecomposition',
+    });
 
-    // Stage 3: Searching engineering knowledge (L1, L2, L3)
-    logStage(3, 'Searching engineering knowledge', 'Querying three-level knowledge repository.');
+    // Validate with Zod schema before accepting
+    const decomposition = RequirementDecompositionSchema.parse(decompositionResponse.data);
+
+    // Stage 2: Mapping engineering dimensions
+    logStage(2, 'Mapping engineering dimensions', 'Extracting dimensions directly from semantic decomposition.');
+    const dimensions = decomposition.inferredEngineeringDimensions;
+
+    // Stage 3: Searching candidate engineering knowledge
+    logStage(3, 'Searching engineering knowledge', 'Querying three-level knowledge repository with inferred dimensions.');
     const retrievedByDimensions = await this.knowledgeRepo.queryByDimensions(dimensions);
 
-    // Also query technology specific knowledge if declared
     const retrievedByTech: typeof retrievedByDimensions = [];
     for (const tech of requirement.declaredTechStack) {
       const techItems = await this.knowledgeRepo.queryByTechnology(tech);
@@ -237,16 +149,81 @@ export class AnalyzeArchitectureUseCase {
       ).values()
     );
 
-    // Stage 4: Identifying failure modes (Unknown-Unknowns)
-    logStage(4, 'Identifying failure modes', 'Discovering candidate failure patterns.');
-    const l2Patterns = allRetrieved.filter((item) => item.levels.includes('failure_pattern'));
-    const l1Fundamentals = allRetrieved.filter((item) => item.levels.includes('fundamental'));
-    const l3Tech = allRetrieved.filter((item) => item.levels.includes('technology_specific'));
+    const l2CandidatePatterns = allRetrieved.filter((item) =>
+      item.levels.includes('failure_pattern')
+    );
+    const l1Fundamentals = allRetrieved.filter((item) =>
+      item.levels.includes('fundamental')
+    );
+    const l3Tech = allRetrieved.filter((item) =>
+      item.levels.includes('technology_specific')
+    );
 
+    // Stage 4: Semantic Concern Relevance Evaluation (Phase B via ProviderAdapter)
+    logStage(4, 'Evaluating concern relevance', 'Evaluating candidate failure modes against decomposed operations.');
+
+    const candidateDescriptions = l2CandidatePatterns
+      .map(
+        (c) =>
+          `ID: ${c.id}\nTitle: ${c.title}\nDescription: ${c.description}\nTriggers: ${c.triggers.join(
+            '; '
+          )}\nFailure Mechanisms: ${c.failureMechanisms.join('; ')}`
+      )
+      .join('\n---\n');
+
+    const relevanceResponse = await this.provider.generateStructured<ConcernRelevanceEvaluation>({
+      messages: [
+        {
+          role: 'system',
+          content: `You are the ArchitectAI Concern Relevance Evaluator.
+Given the decomposed requirement and candidate failure patterns from the knowledge base:
+Determine for EACH candidate whether it is:
+- "applicable": genuinely applies to this workload/architecture
+- "possibly_applicable": plausible or risk under burst/stress conditions
+- "not_applicable": does NOT apply (e.g. offline local CLI does not suffer from network rate limiting or OAuth token race conditions)
+
+Explain why for each, and include confidence (0.0 to 1.0).
+Only include ungroundedConcerns if you identify a critical engineering failure mode NOT represented in the candidates.`,
+        },
+        {
+          role: 'user',
+          content: `Requirement Intent: ${requirement.rawIntent}
+Decomposition Summary:
+- Actors: ${decomposition.actors.join(', ')}
+- Operations: ${decomposition.operations.join(', ')}
+- Concurrency: ${decomposition.concurrencyPotential || 'None'}
+- State: ${decomposition.state.join(', ')}
+- Resources: ${decomposition.resources.join(', ')}
+- External Dependencies: ${decomposition.externalDependencies.join(', ') || 'None'}
+- Trust Boundaries: ${decomposition.trustBoundaries.join(', ')}
+
+Candidate Knowledge Patterns to Evaluate:
+${candidateDescriptions || 'None'}`,
+        },
+      ],
+      schema: ConcernRelevanceEvaluationSchema,
+      schemaName: 'ConcernRelevanceEvaluation',
+    });
+
+    // Validate relevance evaluation with Zod schema
+    const relevanceResult = ConcernRelevanceEvaluationSchema.parse(relevanceResponse.data);
+
+    // Build grounded concerns from applicable candidates
     const discoveredConcerns: ConcernCandidate[] = [];
+    const candidateMap = new Map(l2CandidatePatterns.map((c) => [c.id, c]));
 
-    for (const pattern of l2Patterns) {
-      // Find related L1 and L3 items
+    for (const item of relevanceResult.evaluations) {
+      if (item.relevance === 'not_applicable') {
+        continue; // Discard non-applicable candidate to prevent false positives
+      }
+
+      const pattern = candidateMap.get(item.candidateId);
+      if (!pattern) {
+        // Enforce Grounding: Provider CANNOT invent unsupported knowledge IDs
+        continue;
+      }
+
+      // Find related L1 and L3 items strictly from retrieved items
       const relatedL1 = l1Fundamentals.find((fund) =>
         pattern.relationships.some((rel) => rel.targetKnowledgeId === fund.id)
       ) || l1Fundamentals[0];
@@ -270,30 +247,53 @@ export class AnalyzeArchitectureUseCase {
         requirementId: requirement.id,
         title: pattern.title,
         description: pattern.description,
-        applicabilityReason: `Applies because requirement involves ${concernDims.join(
-          ', '
-        )}: ${pattern.triggers.join('; ')}.`,
+        applicabilityReason: item.applicabilityReason,
         dimensions: concernDims,
         supportingKnowledgeIds: supportingIds,
-        assumptions: [
+        groundingStatus: 'grounded',
+        assumptions: item.assumptions.length > 0 ? item.assumptions : [
           'High load or edge timing conditions will be experienced in production',
           'Client behaviors may not follow ideal sequential request patterns',
         ],
-        confidence: 0.92,
-        unresolvedQuestions: [
-          `What are the peak arrival rates or concurrency limits expected?`,
-          `Are distributed nodes or multiple workers processing requests simultaneously?`,
+        confidence: item.confidence,
+        unresolvedQuestions: item.unresolvedQuestions.length > 0 ? item.unresolvedQuestions : [
+          'What are the peak arrival rates or concurrency limits expected?',
+          'Are distributed nodes or multiple workers processing requests simultaneously?',
         ],
       });
+    }
+
+    // Include any ungrounded concerns discovered by the model
+    if (relevanceResult.ungroundedConcerns && relevanceResult.ungroundedConcerns.length > 0) {
+      for (let i = 0; i < relevanceResult.ungroundedConcerns.length; i++) {
+        const ungrounded = relevanceResult.ungroundedConcerns[i]!;
+        discoveredConcerns.push({
+          id: `concern-ungrounded-${i + 1}`,
+          requirementId: requirement.id,
+          title: ungrounded.title,
+          description: ungrounded.description,
+          applicabilityReason: ungrounded.applicabilityReason,
+          dimensions: ungrounded.dimensions,
+          supportingKnowledgeIds: [], // Strictly empty: do NOT fabricate knowledge IDs!
+          groundingStatus: 'ungrounded_model_discovery',
+          assumptions: ungrounded.assumptions,
+          confidence: ungrounded.confidence,
+          unresolvedQuestions: ungrounded.unresolvedQuestions,
+        });
+      }
     }
 
     // Stage 5: Evaluating architecture choices
     logStage(5, 'Evaluating architecture choices', 'Synthesizing grounded architecture decisions.');
     const decisions: ArchitectureDecision[] = [];
 
-    for (const pattern of l2Patterns.slice(0, 3)) {
+    // Synthesize decisions for up to 3 relevant grounded concerns
+    const groundedConcerns = discoveredConcerns.filter((c) => c.groundingStatus === 'grounded');
+    for (const concern of groundedConcerns.slice(0, 3)) {
+      const patternId = concern.supportingKnowledgeIds[0];
+      const pattern = patternId ? candidateMap.get(patternId) : undefined;
       const relatedL3 = l3Tech.find((tech) =>
-        tech.relationships.some((rel) => rel.targetKnowledgeId === pattern.id)
+        pattern && tech.relationships.some((rel) => rel.targetKnowledgeId === pattern.id)
       );
 
       const options = [
@@ -305,28 +305,30 @@ export class AnalyzeArchitectureUseCase {
         },
         {
           id: 'opt-coordinated',
-          name: relatedL3 ? relatedL3.title : `Coordinated ${pattern.mitigations[0] || 'Mitigation'}`,
+          name: relatedL3
+            ? relatedL3.title
+            : `Coordinated ${pattern?.mitigations[0] || 'Mitigation'}`,
           description: relatedL3
             ? relatedL3.description
-            : (pattern.mitigations[0] || 'Enforce bounds and synchronization.'),
+            : (pattern?.mitigations[0] || 'Enforce bounds and synchronization.'),
           tradeoffs: 'Introduces coordinated state or small latency overhead.',
         },
       ];
 
       decisions.push({
-        id: `decision-${pattern.id}`,
-        problemContext: `Mitigating ${pattern.title} in production runtime.`,
+        id: `decision-${concern.id}`,
+        problemContext: `Mitigating ${concern.title} in production runtime.`,
         consideredOptions: options,
         selectedOptionId: 'opt-coordinated',
         selectedOptionName: options[1]!.name,
-        rationale: `Selected ${options[1]!.name} to prevent ${pattern.failureMechanisms[0] || 'system failure'} while satisfying throughput and correctness requirements.`,
-        evidence: pattern.evidence,
+        rationale: `Selected ${options[1]!.name} to prevent ${pattern?.failureMechanisms[0] || 'system failure'} while satisfying throughput and correctness requirements.`,
+        evidence: pattern ? pattern.evidence : [],
         assumptions: ['Infrastructure supports coordinated state or bounded queueing'],
         risksAndTradeoffs: [
           'Requires proper configuration of timeouts, window sizes, or bounds',
         ],
         verificationRequirements: [
-          `Must verify behavior under simulated burst and concurrent edge conditions`,
+          'Must verify behavior under simulated burst and concurrent edge conditions',
         ],
         reconsiderationTriggers: [
           'System architecture shifts from distributed to single-node or vice versa',
@@ -340,23 +342,26 @@ export class AnalyzeArchitectureUseCase {
     const invariants: EngineeringInvariant[] = [];
     const verificationSpecs: VerificationSpec[] = [];
 
-    for (const pattern of l2Patterns.slice(0, 3)) {
-      const invId = `inv-${pattern.id}`;
+    for (const concern of groundedConcerns.slice(0, 3)) {
+      const patternId = concern.supportingKnowledgeIds[0];
+      const pattern = patternId ? candidateMap.get(patternId) : undefined;
+
+      const invId = `inv-${concern.id}`;
       invariants.push({
         id: invId,
-        property: `The system must maintain safe operation under concurrent edge load and prevent ${pattern.title}.`,
+        property: `The system must maintain safe operation under concurrent edge load and prevent ${concern.title}.`,
         severity: 'critical',
         blocksCompletion: true,
-        rationale: `Unchecked ${pattern.title} causes service degradation or data corruption.`,
+        rationale: `Unchecked ${concern.title} causes service degradation or data corruption.`,
       });
 
       verificationSpecs.push({
-        id: `verif-${pattern.id}`,
+        id: `verif-${concern.id}`,
         target: invId,
-        description: `Stress and boundary verification for ${pattern.title}`,
-        setup: `Deploy instance in isolated test harness with active monitoring enabled.`,
-        action: `Execute synthetic load: ${pattern.verificationIdeas[0] || 'Inject concurrent stimulus matching edge pattern'}.`,
-        expectedProperty: `System handles load gracefully; invariants hold; zero unhandled errors or data corruption.`,
+        description: `Stress and boundary verification for ${concern.title}`,
+        setup: 'Deploy instance in isolated test harness with active monitoring enabled.',
+        action: `Execute synthetic load: ${pattern?.verificationIdeas[0] || 'Inject concurrent stimulus matching edge pattern'}.`,
+        expectedProperty: 'System handles load gracefully; invariants hold; zero unhandled errors or data corruption.',
         evidenceToCollect: [
           'Latency and error-rate telemetry graphs',
           'Memory, CPU, or connection watermark logs',
@@ -378,10 +383,12 @@ export class AnalyzeArchitectureUseCase {
       invariants,
       verificationSpecs,
       assumptions: [
+        ...decomposition.assumptions,
         'Production network connections may experience arbitrary packet latency',
         'Clients can send requests at concurrent peak rates exceeding average throughput',
       ],
       unresolvedQuestions: [
+        ...decomposition.unresolvedQuestions,
         'What is the acceptable P99 latency SLA for this capability?',
         'What alerting and observability thresholds should be configured in production?',
       ],
@@ -400,6 +407,7 @@ export class AnalyzeArchitectureUseCase {
       stages,
       dimensionsDetected: dimensions,
       mode: this.provider.id === 'deterministic-demo' ? 'deterministic-demo' : 'remote-model',
+      decomposition,
     };
   }
 }

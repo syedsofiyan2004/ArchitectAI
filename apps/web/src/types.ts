@@ -1,6 +1,7 @@
 import {
   EngineeringContract,
   EngineeringDimension,
+  RequirementDecomposition,
 } from '@architectai/domain';
 
 export interface AnalysisStageLog {
@@ -16,6 +17,7 @@ export interface AnalyzeArchitectureOutput {
   stages: AnalysisStageLog[];
   dimensionsDetected: EngineeringDimension[];
   mode: 'remote-model' | 'deterministic-demo';
+  decomposition: RequirementDecomposition;
 }
 
 export interface ScenarioPreset {

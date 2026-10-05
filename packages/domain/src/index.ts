@@ -7,3 +7,4 @@ export * from './invariants.js';
 export * from './verification.js';
 export * from './contract.js';
 export * from './evals.js';
+export * from './reasoning.js';
