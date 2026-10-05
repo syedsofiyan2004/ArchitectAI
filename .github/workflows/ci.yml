@@ -39,3 +39,7 @@ jobs:
 
       - name: CLI walking skeleton
         run: pnpm run cli:skeleton
+
+      - name: Build web application
+        run: pnpm run web:build
+

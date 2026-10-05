@@ -13,7 +13,10 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:arch": "vitest run tests/architecture",
-    "cli:skeleton": "pnpm --filter @architectai/cli skeleton"
+    "cli:skeleton": "pnpm --filter @architectai/cli skeleton",
+    "web:dev": "pnpm --filter @architectai/web dev",
+    "web:build": "pnpm --filter @architectai/web build",
+    "web:start": "pnpm --filter @architectai/web start"
   },
   "devDependencies": {
     "@architectai/domain": "workspace:*",

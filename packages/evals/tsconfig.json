@@ -6,7 +6,9 @@
   },
   "references": [
     { "path": "../domain" },
-    { "path": "../knowledge" }
+    { "path": "../knowledge" },
+    { "path": "../application" },
+    { "path": "../providers" }
   ],
   "include": ["src/**/*"],
   "exclude": ["src/**/*.test.ts"]

@@ -95,4 +95,39 @@ describe('InMemoryKnowledgeRepository', () => {
       }
     });
   });
+
+  describe('Prototype Knowledge Coverage (Milestone 1)', () => {
+    let protoRepo: InMemoryKnowledgeRepository;
+
+    beforeEach(async () => {
+      protoRepo = new InMemoryKnowledgeRepository();
+      const { prototypeKnowledgeFixtures } = await import('./prototype-fixtures.js');
+      await protoRepo.load(prototypeKnowledgeFixtures);
+    });
+
+    it('loads all prototype fixtures covering 10 engineering scenarios', async () => {
+      const count = await protoRepo.count();
+      expect(count).toBeGreaterThanOrEqual(20);
+
+      const fundamentals = await protoRepo.queryByLevel('fundamental');
+      expect(fundamentals.length).toBeGreaterThanOrEqual(7);
+
+      const patterns = await protoRepo.queryByLevel('failure_pattern');
+      expect(patterns.length).toBeGreaterThanOrEqual(10);
+
+      const techItems = await protoRepo.queryByLevel('technology_specific');
+      expect(techItems.length).toBeGreaterThanOrEqual(10);
+    });
+
+    it('queries across diverse technologies (Redis, PostgreSQL, Node.js)', async () => {
+      const redisItems = await protoRepo.queryByTechnology('Redis');
+      expect(redisItems.length).toBeGreaterThanOrEqual(2);
+
+      const pgItems = await protoRepo.queryByTechnology('PostgreSQL');
+      expect(pgItems.length).toBeGreaterThanOrEqual(3);
+
+      const nodeItems = await protoRepo.queryByTechnology('Node.js');
+      expect(nodeItems.length).toBeGreaterThanOrEqual(3);
+    });
+  });
 });

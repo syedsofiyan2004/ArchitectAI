@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@architectai/domain": "workspace:*",
-    "@architectai/knowledge": "workspace:*"
+    "@architectai/knowledge": "workspace:*",
+    "@architectai/application": "workspace:*",
+    "@architectai/providers": "workspace:*"
   }
 }
