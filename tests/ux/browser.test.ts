@@ -1,16 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { chromium, type Browser, type BrowserContext } from 'playwright';
+import { chromium, type Browser } from 'playwright';
 import { createServer } from '../../apps/web/server/server.js';
 import type { Server } from 'node:http';
 
-describe('ArchitectAI Browser UX & Interaction Gate', () => {
+describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
   let server: Server;
   let baseUrl: string;
   let browser: Browser | null = null;
   let hasChromium = false;
 
   beforeAll(async () => {
-    // 1. Start backend server with ephemeral port
     const app = await createServer();
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
@@ -22,12 +21,11 @@ describe('ArchitectAI Browser UX & Interaction Gate', () => {
       });
     });
 
-    // 2. Attempt to launch Chromium
     try {
       browser = await chromium.launch();
       hasChromium = true;
     } catch (err) {
-      console.warn('[UX Test] Chromium not installed or launch failed; skipping browser tests:', err);
+      console.warn('[UX Test] Chromium launch failed, skipping:', err);
       hasChromium = false;
     }
   });
@@ -41,36 +39,113 @@ describe('ArchitectAI Browser UX & Interaction Gate', () => {
     }
   });
 
-  it('renders application shell, brand, and zero horizontal overflow on desktop (1920x1080)', async () => {
+  it('starts cleanly on product home without auto-running scenarios', async () => {
     if (!hasChromium || !browser) return;
 
-    const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
 
-    // Assert Brand & Shell elements
-    const brandName = await page.textContent('.brand-name');
-    expect(brandName).toBe('ArchitectAI');
+    // Assert Brand & One-sentence value prop
+    const heroTitle = await page.textContent('.hero-title');
+    expect(heroTitle).toContain('Engineering intelligence for AI-built software');
 
-    const topBar = await page.$('.top-bar');
-    expect(topBar).not.toBeNull();
+    // Assert primary CTA exists
+    const newAnalysisBtn = await page.$('text="New Architecture Analysis"');
+    expect(newAnalysisBtn).not.toBeNull();
+
+    // Verify Composer is NOT rendered globally on Home
+    const composer = await page.$('.composer-hero-textarea');
+    expect(composer).toBeNull();
 
     // Verify zero horizontal overflow
-    const overflow = await page.evaluate(() => {
-      const el = document.documentElement;
-      return el.scrollWidth > el.clientWidth;
+    const hasOverflow = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
     });
-    expect(overflow).toBe(false);
+    expect(hasOverflow).toBe(false);
 
     await page.close();
   });
 
-  it('verifies zero horizontal overflow and responsive workflow rail on mobile (390x844)', async () => {
+  it('walks through complete user journey from / to /new, review, evidence, architecture, verification, and implementation', async () => {
+    if (!hasChromium || !browser) return;
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+
+    // 1. Click New Architecture Analysis -> navigates to /new
+    await page.click('text="New Architecture Analysis"');
+    await page.waitForURL('**/new');
+    expect(page.url()).toContain('/new');
+
+    // 2. Enter requirement
+    const textarea = await page.waitForSelector('#intent-input');
+    expect(textarea).not.toBeNull();
+    await textarea.fill('When my access token expires automatically refresh it and retry the failed request.');
+
+    // 3. Submit via Analyze Architecture button
+    await page.click('button:has-text("Analyze Architecture")');
+
+    // 4. Verify immediate navigation to run screen and active analyzing state
+    await page.waitForURL('**/runs/run_*');
+    expect(page.url()).toMatch(/\/runs\/run_/);
+
+    // 5. Wait for results to land on Architecture Review screen
+    await page.waitForSelector('.review-hero', { timeout: 15000 });
+
+    // 6. Verify high-priority findings visible
+    const findingsCount = await page.textContent('.review-title');
+    expect(findingsCount).toMatch(/\d+ engineering risk/i);
+
+    const firstFinding = await page.$('.finding-row-card');
+    expect(firstFinding).not.toBeNull();
+
+    // 7. Open Technical Evidence Drawer
+    const whyBtn = await page.$('button:has-text("[Why ArchitectAI found this]")');
+    expect(whyBtn).not.toBeNull();
+    await whyBtn?.click();
+    await page.waitForSelector('.drawer-panel');
+
+    const drawerTitle = await page.textContent('.drawer-panel h3');
+    expect(drawerTitle).toContain('Technical Evidence');
+
+    // 8. Close Evidence Drawer
+    await page.click('button[aria-label="Close drawer"]');
+    await page.waitForTimeout(300);
+
+    // 9. Continue to Architecture
+    await page.click('button:has-text("Continue to Architecture")');
+    await page.waitForURL('**/architecture');
+    const archTitle = await page.textContent('.architecture-title');
+    expect(archTitle).toBe('Recommended Architecture');
+
+    // 10. Continue to Verification
+    await page.click('button:has-text("Continue to Verification")');
+    await page.waitForURL('**/verification');
+    const verifTitle = await page.textContent('.verification-title');
+    expect(verifTitle).toBe('Independent Verification Plan');
+
+    // 11. Continue to Implementation
+    await page.click('button:has-text("Prepare Implementation")');
+    await page.waitForURL('**/implementation');
+    const implTitle = await page.textContent('.implementation-title');
+    expect(implTitle).toBe('Implementation Workspace');
+
+    // Verify zero horizontal overflow on desktop
+    const overflowDesktop = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    expect(overflowDesktop).toBe(false);
+
+    await page.close();
+  });
+
+  it('guarantees zero horizontal overflow and responsive layout on mobile (390x844)', async () => {
     if (!hasChromium || !browser) return;
 
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
 
-    const overflow = await page.evaluate(() => {
+    const overflowHome = await page.evaluate(() => {
       const el = document.documentElement;
       return {
         scrollWidth: el.scrollWidth,
@@ -78,72 +153,17 @@ describe('ArchitectAI Browser UX & Interaction Gate', () => {
         hasOverflow: el.scrollWidth > el.clientWidth,
       };
     });
+    expect(overflowHome.hasOverflow).toBe(false);
+    expect(overflowHome.scrollWidth).toBeLessThanOrEqual(390);
 
-    expect(overflow.hasOverflow).toBe(false);
-    expect(overflow.scrollWidth).toBeLessThanOrEqual(390);
+    // Navigate to /new on mobile
+    await page.click('text="New Architecture Analysis"');
+    await page.waitForURL('**/new');
 
-    // Verify rail collapses into horizontal navigation without breaking layout
-    const workflowRail = await page.$('.workflow-rail');
-    expect(workflowRail).not.toBeNull();
-
-    await page.close();
-  });
-
-  it('supports Ctrl+Enter keyboard submission and instant activity indicator', async () => {
-    if (!hasChromium || !browser) return;
-
-    const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    await page.goto(baseUrl, { waitUntil: 'networkidle' });
-
-    const textarea = await page.$('#intent-input');
-    expect(textarea).not.toBeNull();
-
-    if (textarea) {
-      await textarea.fill('Limit each authenticated user to 100 API requests per minute.');
-      await textarea.press('Control+Enter');
-
-      // Assert activity indicator is rendered
-      const activityCard = await page.$('.activity-card');
-      expect(activityCard).not.toBeNull();
-
-      // Wait for analysis result to arrive
-      await page.waitForSelector('.canvas-view-container', { timeout: 10000 });
-      const unknowns = await page.$('.findings-container');
-      expect(unknowns).not.toBeNull();
-    }
-
-    await page.close();
-  });
-
-  it('navigates through workflow rail tabs without errors or overflow', async () => {
-    if (!hasChromium || !browser) return;
-
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    await page.goto(baseUrl, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.canvas-view-container', { timeout: 10000 });
-
-    const tabLabels = [
-      'Unknown-Unknowns',
-      '3-Level Knowledge',
-      'Decisions & ADRs',
-      'Verification Plan',
-      'Implementation',
-      'Contract JSON',
-    ];
-
-    for (const label of tabLabels) {
-      const tabBtn = await page.$(`button:has-text("${label}")`);
-      expect(tabBtn).not.toBeNull();
-      if (tabBtn) {
-        await tabBtn.click();
-        await page.waitForTimeout(200);
-
-        const hasOverflow = await page.evaluate(() => {
-          return document.documentElement.scrollWidth > document.documentElement.clientWidth;
-        });
-        expect(hasOverflow).toBe(false);
-      }
-    }
+    const overflowNew = await page.evaluate(() => {
+      return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+    });
+    expect(overflowNew).toBe(false);
 
     await page.close();
   });

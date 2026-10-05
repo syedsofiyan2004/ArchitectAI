@@ -46,7 +46,6 @@ export interface PlanExecutionOutput {
   executedAt: string;
 }
 
-
 export interface AnalysisStageLog {
   stage: number;
   name: string;
@@ -83,4 +82,23 @@ export interface ServerConfig {
   providerName: string;
   modelName: string;
   knowledgeItemsCount: number;
+}
+
+export interface AnalysisRunRecord {
+  id: string;
+  title: string;
+  rawIntent: string;
+  context: Record<string, string>;
+  explicitConstraints: string[];
+  declaredTechStack: string[];
+  createdAt: string;
+  status: 'analyzing' | 'completed' | 'failed';
+  error?: string;
+  result?: AnalyzeArchitectureOutput;
+  // Execution state for this run
+  workspace?: RepositoryWorkspace;
+  plan?: ImplementationPlan;
+  execution?: PlanExecutionOutput;
+  // User answers to unresolved questions
+  userAnswers?: Record<string, string>;
 }

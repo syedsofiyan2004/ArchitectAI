@@ -18,8 +18,10 @@
     "@architectai/providers": "workspace:*",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "lucide-react": "^1.52.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
