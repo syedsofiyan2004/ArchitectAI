@@ -45,3 +45,27 @@ export interface ProviderAdapter {
   generateText(request: ProviderRequest): Promise<ProviderResponse>;
   generateStructured<T>(request: StructuredProviderRequest): Promise<StructuredProviderResponse<T>>;
 }
+
+export interface AgentAvailability {
+  available: boolean;
+  version?: string;
+  reason?: string;
+}
+
+export interface AgentWorkspace {
+  repositoryPath: string;
+  worktreePath?: string;
+  branch: string;
+  headCommit: string;
+}
+
+export interface CodingAgentAdapter {
+  readonly id: string;
+  readonly name: string;
+  detect(): Promise<AgentAvailability>;
+  executeTask(
+    workspace: AgentWorkspace,
+    task: import('@architectai/domain').ImplementationTask
+  ): Promise<import('@architectai/domain').AgentExecutionResult>;
+  cancel(executionId: string): Promise<void>;
+}

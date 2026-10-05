@@ -6,6 +6,7 @@ import { UnknownUnknownsView } from './components/UnknownUnknownsView';
 import { KnowledgeMapView } from './components/KnowledgeMapView';
 import { DecisionsView } from './components/DecisionsView';
 import { VerificationPlanView } from './components/VerificationPlanView';
+import { ImplementationView } from './components/ImplementationView';
 import { ContractInspector } from './components/ContractInspector';
 import {
   ServerConfig,
@@ -21,7 +22,7 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeArchitectureOutput | null>(null);
   const [activeTab, setActiveTab] = useState<
-    'overview' | 'unknowns' | 'knowledge' | 'decisions' | 'verification' | 'contract'
+    'overview' | 'unknowns' | 'knowledge' | 'decisions' | 'verification' | 'implementation' | 'contract'
   >('overview');
 
   useEffect(() => {
@@ -163,6 +164,15 @@ export function App() {
 
               <button
                 type="button"
+                className={`tab-btn ${activeTab === 'implementation' ? 'active' : ''}`}
+                onClick={() => setActiveTab('implementation')}
+              >
+                <span>Implementation</span>
+                <span className="tab-badge font-mono">EXEC</span>
+              </button>
+
+              <button
+                type="button"
                 className={`tab-btn ${activeTab === 'contract' ? 'active' : ''}`}
                 onClick={() => setActiveTab('contract')}
               >
@@ -238,6 +248,10 @@ export function App() {
                   invariants={result.contract.invariants}
                   verificationSpecs={result.contract.verificationSpecs}
                 />
+              )}
+
+              {activeTab === 'implementation' && (
+                <ImplementationView contract={result.contract} />
               )}
 
               {activeTab === 'contract' && (

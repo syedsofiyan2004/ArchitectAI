@@ -15,11 +15,26 @@ This backlog tracks non-blocking enhancements, polish items, and deferred archit
 
 ---
 
+## P2 — Important Enhancements (Post-Milestone 2)
+
+1. **Claude Code CLI Adapter**
+   - *Context*: Implement Claude Code CLI integration behind `CodingAgentAdapter` alongside Codex CLI.
+2. **Interactive Multi-File Side-by-Side Diff Inspector**
+   - *Context*: Enhance the web UI diff viewer with side-by-side syntax-highlighted code comparison and hunk expansion.
+3. **Granular Per-Task Approval Gate**
+   - *Context*: Allow users to selectively approve or deselect individual tasks in an implementation plan rather than all-or-nothing execution.
+4. **Persistent Execution Runs & Resumption**
+   - *Context*: Persist `PlanExecutionOutput` runs to SQLite / local storage so users can review previous execution logs and diffs across restarts.
+
+---
+
 ## P3 — Polish & Refinements
 
-1. **Light/Dark Theme Toggle**
+1. **Download Raw Git Patch (.patch)**
+   - *Context*: Add one-click download button for the generated Git diff in standard patch format.
+2. **Light/Dark Theme Toggle**
    - *Context*: Default is high-contrast engineering dark mode; add optional system-matching light mode.
-2. **Export to Architecture Decision Record (ADR) Markdown**
+3. **Export to Architecture Decision Record (ADR) Markdown**
    - *Context*: Add one-click export of an `EngineeringContract` into standard ADR markdown format for repository commit.
-3. **Saved Analysis Sessions in Local Storage**
-   - *Context*: Allow switching between previous analyses in the browser without server persistence.
+4. **Automated Worktree Pruning Schedule**
+   - *Context*: Background routine to prune stale temporary worktrees older than 24 hours.

@@ -2,6 +2,8 @@ import {
   RequirementDecomposition,
   RequirementDecompositionSchema,
   ConcernRelevanceEvaluationSchema,
+  ImplementationPlanSchema,
+  ImplementationTask,
   WellKnownDimensions,
 } from '@architectai/domain';
 import {
@@ -721,6 +723,90 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
       };
 
       const validated = ConcernRelevanceEvaluationSchema.parse(resultData);
+      return {
+        content: JSON.stringify(validated),
+        data: validated as T,
+      };
+    }
+
+    if (request.schemaName === 'ImplementationPlan') {
+      const userMessage = request.messages.find((m) => m.role === 'user')?.content || '';
+      const contractIdMatch = userMessage.match(/Contract ID:\s*([^\r\n]+)/);
+      const contractId = (contractIdMatch && contractIdMatch[1]) ? contractIdMatch[1].trim() : 'contract-compiled';
+      const repoPathMatch = userMessage.match(/Repository Path:\s*([^\r\n]+)/);
+      const repositoryPath = (repoPathMatch && repoPathMatch[1]) ? repoPathMatch[1].trim() : '.';
+      const reqMatch = userMessage.match(/Requirement:\s*([^\r\n]+)/);
+      const requirement = (reqMatch && reqMatch[1]) ? reqMatch[1].trim() : 'System implementation requirement';
+
+      const concernIds = Array.from(userMessage.matchAll(/- ID:\s*(concern-[a-zA-Z0-9_-]+)/g)).map((m) => m[1]!);
+      const decisionIds = Array.from(userMessage.matchAll(/- ID:\s*(decision-[a-zA-Z0-9_-]+)/g)).map((m) => m[1]!);
+      const invariantIds = Array.from(userMessage.matchAll(/- ID:\s*(inv-[a-zA-Z0-9_-]+)/g)).map((m) => m[1]!);
+
+      const primaryConcernIds = concernIds.length > 0 ? concernIds : ['concern-default'];
+      const primaryDecisionIds = decisionIds.length > 0 ? decisionIds : ['decision-default'];
+      const primaryInvariantIds = invariantIds.length > 0 ? invariantIds : ['inv-default'];
+
+      const tasks: ImplementationTask[] = [
+        {
+          id: 'TASK-001',
+          title: `Implement core architectural mechanism for ${requirement.slice(0, 40)}`,
+          objective: `Implement bounded mechanism mitigating ${primaryConcernIds.join(', ')} according to decision ${primaryDecisionIds.join(', ')}.`,
+          sourceConcernIds: primaryConcernIds,
+          sourceDecisionIds: primaryDecisionIds,
+          sourceInvariantIds: primaryInvariantIds,
+          dependencies: [],
+          contextReferences: ['src/index.ts', 'src/app.ts'],
+          allowedFiles: ['src/**'],
+          excludedFiles: ['.env*', 'package-lock.json', 'node_modules/**'],
+          requirements: [
+            `Implement bounded logic satisfying invariant: ${primaryInvariantIds[0] || 'bounded resource consumption'}`,
+            'Ensure all edge cases and burst conditions are handled gracefully without unbounded memory or unhandled exceptions',
+          ],
+          acceptanceCriteria: [
+            'Mechanism conforms to architecture decision rationale',
+            'Code compiles cleanly with strict TypeScript checks',
+          ],
+          verificationCommands: ['npm test'],
+          expectedArtifacts: ['src/'],
+          riskLevel: 'medium',
+          status: 'pending',
+        },
+        {
+          id: 'TASK-002',
+          title: `Integrate and verify invariants for ${requirement.slice(0, 40)}`,
+          objective: `Integrate core mechanism into application entry points and add automated invariant tests.`,
+          sourceConcernIds: primaryConcernIds,
+          sourceDecisionIds: primaryDecisionIds,
+          sourceInvariantIds: primaryInvariantIds,
+          dependencies: ['TASK-001'],
+          contextReferences: ['src/index.ts', 'tests/'],
+          allowedFiles: ['src/**', 'test/**', 'tests/**'],
+          excludedFiles: ['.env*'],
+          requirements: [
+            'Wire mechanism into request processing path',
+            'Add automated verification test validating invariant properties under load',
+          ],
+          acceptanceCriteria: [
+            'All existing tests and new invariant tests pass cleanly',
+            'Zero side-effect regressions in existing application flows',
+          ],
+          verificationCommands: ['npm test'],
+          expectedArtifacts: ['tests/'],
+          riskLevel: 'low',
+          status: 'pending',
+        },
+      ];
+
+      resultData = {
+        id: `plan-${Date.now()}`,
+        contractId,
+        repositoryPath,
+        summary: `Implementation plan for ${contractId}: compiled ${tasks.length} bounded tasks addressing concerns ${primaryConcernIds.join(', ')}.`,
+        tasks,
+        createdAt: new Date().toISOString(),
+      };
+
+      const validated = ImplementationPlanSchema.parse(resultData);
       return {
         content: JSON.stringify(validated),
         data: validated as T,

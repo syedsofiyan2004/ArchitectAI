@@ -2,7 +2,50 @@ import {
   EngineeringContract,
   EngineeringDimension,
   RequirementDecomposition,
+  ImplementationPlan,
+  ImplementationTask,
+  RepositoryWorkspace,
+  RepositoryContext,
+  AgentExecutionResult,
 } from '@architectai/domain';
+
+export interface AgentInfo {
+  id: string;
+  name: string;
+  available: boolean;
+  version?: string;
+  reason?: string;
+}
+
+export interface PlanExecutionOutput {
+  plan: ImplementationPlan;
+  runId: string;
+  agentId: string;
+  agentName: string;
+  isolatedBranch: string;
+  originalBranch: string;
+  originalHead: string;
+  originalBranchUntouched: boolean;
+  taskResults: AgentExecutionResult[];
+  executionChecks: Array<{
+    command: string;
+    scriptName: string;
+    passed: boolean;
+    exitCode: number;
+    stdout: string;
+    stderr: string;
+    durationMs: number;
+  }>;
+  diffReport: {
+    isClean: boolean;
+    changedFiles: string[];
+    diff: string;
+    rawStatus: string;
+  };
+  allTasksCompleted: boolean;
+  executedAt: string;
+}
+
 
 export interface AnalysisStageLog {
   stage: number;

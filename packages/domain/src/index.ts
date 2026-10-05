@@ -8,3 +8,5 @@ export * from './verification.js';
 export * from './contract.js';
 export * from './evals.js';
 export * from './reasoning.js';
+export * from './workspace.js';
+export * from './execution.js';

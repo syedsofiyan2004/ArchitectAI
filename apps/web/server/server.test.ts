@@ -122,4 +122,33 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     const json = await res.json();
     expect(json.error).toBeDefined();
   });
+
+  it('GET /api/agents returns list of registered coding agent adapters', async () => {
+    const res = await fetch(`${baseUrl}/api/agents`);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(Array.isArray(json.agents)).toBe(true);
+    expect(json.agents.length).toBeGreaterThanOrEqual(1);
+
+    const agentIds = json.agents.map((a: any) => a.id);
+    expect(agentIds).toContain('codex-cli');
+  });
+
+  it('POST /api/plan/execute rejects execution without explicit user approval with 403', async () => {
+    const res = await fetch(`${baseUrl}/api/plan/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        plan: { id: 'plan-test' },
+        approved: false,
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.error).toContain('Explicit user approval is strictly required');
+  });
 });
+

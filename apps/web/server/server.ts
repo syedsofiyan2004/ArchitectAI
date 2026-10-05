@@ -10,8 +10,20 @@ import {
   OpenAICompatibleProviderAdapter,
   DeterministicDemoProviderAdapter,
   ProviderAdapter,
+  CodingAgentGateway,
 } from '@architectai/providers';
-import { AnalyzeArchitectureUseCase } from '@architectai/application';
+import {
+  AnalyzeArchitectureUseCase,
+  GitWorkspaceService,
+  RepositoryContextBuilder,
+  CompileImplementationPlanUseCase,
+  ExecuteImplementationPlanUseCase,
+  NonGitRepositoryError,
+} from '@architectai/application';
+import {
+  EngineeringContractSchema,
+  ImplementationPlanSchema,
+} from '@architectai/domain';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -40,6 +52,11 @@ export async function createServer() {
   }
 
   const useCase = new AnalyzeArchitectureUseCase(knowledgeRepo, provider);
+  const agentGateway = new CodingAgentGateway();
+  const gitWorkspaceService = new GitWorkspaceService();
+  const contextBuilder = new RepositoryContextBuilder();
+  const taskCompiler = new CompileImplementationPlanUseCase(provider);
+  const planExecutor = new ExecuteImplementationPlanUseCase(agentGateway);
 
   // API Config
   app.get('/api/config', (_req: Request, res: Response) => {
@@ -193,6 +210,109 @@ export async function createServer() {
       return res.status(500).json({
         success: false,
         error: err instanceof Error ? err.message : 'Internal analysis pipeline error.',
+      });
+    }
+  });
+
+  // Coding Agent detection
+  app.get('/api/agents', async (_req: Request, res: Response) => {
+    try {
+      const agents = await agentGateway.listAvailableAgents();
+      res.json({
+        success: true,
+        agents: agents.map((a) => ({
+          id: a.adapter.id,
+          name: a.adapter.name,
+          available: a.availability.available,
+          version: a.availability.version,
+          reason: a.availability.reason,
+        })),
+      });
+    } catch (err: unknown) {
+      res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to query agents.',
+      });
+    }
+  });
+
+  // Repository Inspection
+  app.post('/api/repo/inspect', async (req: Request, res: Response) => {
+    try {
+      const { repoPath } = req.body;
+      if (!repoPath || typeof repoPath !== 'string') {
+        return res.status(400).json({ error: 'Please provide a valid repository path.' });
+      }
+      const workspace = await gitWorkspaceService.inspectRepository(repoPath.trim());
+      return res.json({ success: true, workspace });
+    } catch (err: unknown) {
+      if (err instanceof NonGitRepositoryError) {
+        return res.status(400).json({ success: false, error: err.message, isNonGit: true });
+      }
+      return res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to inspect repository.',
+      });
+    }
+  });
+
+  // Compile Implementation Plan
+  app.post('/api/plan/compile', async (req: Request, res: Response) => {
+    try {
+      const { contract, repoPath } = req.body;
+      if (!contract) {
+        return res.status(400).json({ error: 'EngineeringContract is required.' });
+      }
+      const validatedContract = EngineeringContractSchema.parse(contract);
+      const targetPath =
+        typeof repoPath === 'string' && repoPath.trim().length > 0
+          ? repoPath.trim()
+          : process.cwd();
+
+      const workspace = await gitWorkspaceService.inspectRepository(targetPath);
+      const context = await contextBuilder.buildContext(validatedContract, workspace);
+      const plan = await taskCompiler.execute(validatedContract, context);
+
+      return res.json({
+        success: true,
+        plan,
+        context,
+        workspace,
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to compile implementation plan.',
+      });
+    }
+  });
+
+  // Execute Implementation Plan (requires explicit user approval)
+  app.post('/api/plan/execute', async (req: Request, res: Response) => {
+    try {
+      const { plan, agentId, approved } = req.body;
+      if (!approved) {
+        return res.status(403).json({
+          success: false,
+          error:
+            'Execution rejected: Explicit user approval is strictly required before modifying files.',
+        });
+      }
+      if (!plan) {
+        return res.status(400).json({ error: 'ImplementationPlan is required.' });
+      }
+
+      const validatedPlan = ImplementationPlanSchema.parse(plan);
+      const output = await planExecutor.execute(validatedPlan, agentId);
+
+      return res.json({
+        success: true,
+        execution: output,
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Execution failed.',
       });
     }
   });
