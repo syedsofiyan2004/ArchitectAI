@@ -9,6 +9,6 @@
     "typecheck": "tsc -b --noEmit"
   },
   "dependencies": {
-    "@architectai/domain": "*"
+    "@architectai/domain": "workspace:*"
   }
 }

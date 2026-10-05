@@ -41,6 +41,29 @@ This repository currently hosts the foundational kernel established in **BOOTSTR
 
 ---
 
+## Development & Verification Commands
+
+ArchitectAI strictly standardizes on `pnpm` workspaces:
+
+```bash
+# Install dependencies with frozen lockfile
+pnpm install --frozen-lockfile
+
+# Typecheck all packages with TypeScript strict mode
+pnpm run typecheck
+
+# Run unit tests and evaluation suite
+pnpm run test
+
+# Run architecture boundary tests
+pnpm run test:arch
+
+# Execute deterministic CLI walking skeleton
+pnpm run cli:skeleton
+```
+
+---
+
 ## What Explicitly Does Not Exist Yet (Out of Scope)
 
 The following components are deliberately deferred and **not implemented** in this foundation phase:

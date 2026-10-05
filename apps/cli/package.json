@@ -12,10 +12,10 @@
     "skeleton": "tsx ./src/index.ts skeleton"
   },
   "dependencies": {
-    "@architectai/domain": "*",
-    "@architectai/knowledge": "*",
-    "@architectai/application": "*",
-    "@architectai/verification": "*",
+    "@architectai/domain": "workspace:*",
+    "@architectai/knowledge": "workspace:*",
+    "@architectai/application": "workspace:*",
+    "@architectai/verification": "workspace:*",
     "zod": "^3.24.2"
   },
   "devDependencies": {

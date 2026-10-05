@@ -91,9 +91,9 @@ export async function runWalkingSkeleton(): Promise<SkeletonExecutionResult> {
         assumptions: [
           'Edge sensors communicate via standard TCP stream connections',
         ],
-        confidence: 0.96,
+        confidence: 0.92,
         unresolvedQuestions: [
-          'Can edge sensors tolerate TCP socket backpressure pauses?',
+          'Can edge sensors tolerate TCP socket backpressure pauses without connection aborts?',
         ],
       },
     ],
@@ -115,23 +115,23 @@ export async function runWalkingSkeleton(): Promise<SkeletonExecutionResult> {
             description:
               'Wire ingestion via Node.js stream.pipeline() respecting highWaterMark backpressure.',
             tradeoffs:
-              'Upstream sockets are paused when downstream fills, exerting network backpressure.',
+              'Upstream readable stream is paused when downstream writable buffer exceeds highWaterMark, propagating flow control.',
           },
         ],
         selectedOptionId: 'opt-bounded-stream-pipeline',
         selectedOptionName:
           'Bounded Stream Pipeline with highWaterMark Flow Control',
         rationale:
-          'Grounds memory allocation in finite physical capacity by pausing TCP socket reads when internal buffers reach highWaterMark.',
+          'Establishes bounded memory usage during downstream processing delays by using Node.js stream highWaterMark flow control. When write() returns false, the ingestion readable stream pauses consumption until drain is emitted, preventing unbounded buffer accumulation in V8 memory.',
         evidence: [techSpecific[0]!.evidence[0]!],
         assumptions: [
-          'Node.js runtime manages socket flow control through OS TCP windowing',
+          'Node.js stream pipeline pauses upstream readable socket when downstream buffer exceeds highWaterMark',
         ],
         risksAndTradeoffs: [
           'Sensor connections may time out if downstream outage persists indefinitely',
         ],
         verificationRequirements: [
-          'Simulate slow downstream consumer; verify heap allocation reaches steady state <= 128MB',
+          'In benchmark scenario (10,000 sensors, 50MB burst), measure V8 heapUsed stabilization and stream flow control transitions',
         ],
         reconsiderationTriggers: [
           'Telemetry protocol shifts from TCP streaming to UDP datagrams without flow control',
@@ -142,11 +142,11 @@ export async function runWalkingSkeleton(): Promise<SkeletonExecutionResult> {
       {
         id: 'inv-bounded-heap',
         property:
-          'Ingestion process RSS heap must not exceed 128MB regardless of upstream ingress rate.',
+          'Under the scenario workload (10,000 edge sensors, 50MB ingress burst), V8 heapUsed must stabilize below 128MB with total process RSS bounded below 256MB.',
         severity: 'critical',
         blocksCompletion: true,
         rationale:
-          'Protects container from host OOM killer termination.',
+          'Separates V8 managed heap (heapUsed) from OS-level resident set size (RSS), bounding memory footprint to prevent container termination while acknowledging scenario limits.',
       },
     ],
     verificationSpecs: [
@@ -154,16 +154,18 @@ export async function runWalkingSkeleton(): Promise<SkeletonExecutionResult> {
         id: 'verif-stream-backpressure',
         target: 'inv-bounded-heap',
         description:
-          'Verify stream backpressure engagement and bounded memory consumption.',
+          'Verify stream backpressure flow control engagement and bounded memory consumption in scenario.',
         setup:
-          'Spin up local ingestion listener with highWaterMark=64KB and mock consumer paused for 30s.',
+          'Deploy local ingestion service with highWaterMark=64KB; connect mock slow downstream consumer with simulated 30s processing delay.',
         action:
-          'Flood socket with 50MB of raw bytes at 10MB/sec.',
+          'Transmit scenario load of 50MB telemetry payload in 64KB chunks at 10MB/sec.',
         expectedProperty:
-          'Socket pauses receiving after 64KB; process memory remains flat; drain event resumes consumption.',
+          'stream.write() returns false when internal buffer reaches highWaterMark; upstream readable stream pauses; process.memoryUsage().heapUsed stabilizes <= 128MB; drain event fires to resume consumption.',
         evidenceToCollect: [
-          'stream.writableLength metrics',
-          'process.memoryUsage().heapUsed timeline',
+          'process.memoryUsage().heapUsed',
+          'process.memoryUsage().rss',
+          'stream.writableLength',
+          'stream write return values and drain event timestamps',
         ],
         isAutomatable: true,
       },

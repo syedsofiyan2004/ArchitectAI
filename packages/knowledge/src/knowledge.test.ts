@@ -68,4 +68,31 @@ describe('InMemoryKnowledgeRepository', () => {
     const missing = await repo.getById('missing-id');
     expect(missing).toBeUndefined();
   });
+
+  describe('Honest Evidence Provenance (Task 001A)', () => {
+    it('ensures synthetic fixtures do not masquerade as empirical postmortems or benchmarks', () => {
+      const syntheticItems = [neutralFundamentalKnowledge, neutralFailurePatternKnowledge];
+      for (const item of syntheticItems) {
+        for (const ev of item.evidence) {
+          expect(ev.sourceType).toBe('manual_analysis');
+          expect(ev.qualityNotes).toBeDefined();
+          expect(ev.qualityNotes?.toLowerCase()).toContain('synthetic');
+          // No unjustified 1.0 or inflated confidence
+          if (ev.confidenceScore !== undefined) {
+            expect(ev.confidenceScore).toBeLessThan(1.0);
+          }
+        }
+      }
+    });
+
+    it('ensures official documentation fixtures have real URLs, specific technology, and quality notes', () => {
+      for (const ev of neutralTechnologySpecificKnowledge.evidence) {
+        expect(ev.sourceType).toBe('official_documentation');
+        expect(ev.sourceUrlOrIdentifier).toMatch(/^https?:\/\//);
+        expect(ev.technology).toBe('Node.js');
+        expect(ev.qualityNotes).toBeDefined();
+        expect(ev.versionApplicability).toBeDefined();
+      }
+    });
+  });
 });

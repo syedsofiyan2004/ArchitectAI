@@ -7,12 +7,13 @@
     "packages/*",
     "apps/*"
   ],
+  "packageManager": "pnpm@12.8.1",
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:arch": "vitest run tests/architecture",
-    "cli:skeleton": "npm run --workspace=@architectai/cli skeleton"
+    "cli:skeleton": "pnpm --filter @architectai/cli skeleton"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

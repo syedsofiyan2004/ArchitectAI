@@ -28,6 +28,8 @@ export const EvaluationResultSchema = z.object({
   discoveredDimensions: z.array(EngineeringDimensionSchema),
   missingExpectedDimensions: z.array(EngineeringDimensionSchema),
   hallucinatedForbiddenDimensions: z.array(EngineeringDimensionSchema),
+  discoveredKnowledgeLevels: z.array(KnowledgeLevelSchema).default([]),
+  missingRequiredKnowledgeLevels: z.array(KnowledgeLevelSchema).default([]),
   contractConformsToSchema: z.boolean(),
   failureReasons: z.array(z.string()).default([]),
   evaluatedAt: z.string().datetime(),

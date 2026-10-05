@@ -6,9 +6,9 @@ import {
 export const neutralFundamentalKnowledge: EngineeringKnowledgeItem = {
   id: 'fundamental-bounded-memory-buffers',
   levels: ['fundamental'],
-  title: 'Bounded Memory Buffering and Finite Capacity',
+  title: 'Analytical Primitive: Physical Buffer Finiteness and Flow Equilibrium',
   description:
-    'Physical computational systems have finite, bounded random-access memory. Unbounded ingestion rates when producer throughput exceeds consumer throughput will inevitably deplete available memory capacity.',
+    'Physical computational systems have finite, bounded random-access memory. Unbounded ingestion rates when producer throughput exceeds consumer throughput will inevitably deplete available memory capacity without backpressure signaling.',
   dimensions: [
     WellKnownDimensions.BOUNDED_RESOURCE,
     WellKnownDimensions.CONCURRENCY,
@@ -18,8 +18,8 @@ export const neutralFundamentalKnowledge: EngineeringKnowledgeItem = {
     'unbounded queue accumulation',
   ],
   failureMechanisms: [
-    'Process out-of-memory termination',
-    'Abrupt process death from resource starvation',
+    'Process termination under resource exhaustion',
+    'Abrupt process death from memory exhaustion',
   ],
   mitigations: [
     'Establish explicit upper bound on buffer size',
@@ -31,12 +31,14 @@ export const neutralFundamentalKnowledge: EngineeringKnowledgeItem = {
   ],
   evidence: [
     {
-      id: 'ev-fund-01',
-      sourceType: 'specification',
-      title: 'Reactive Streams: Backpressure Specification',
+      id: 'ev-fund-analysis-01',
+      sourceType: 'manual_analysis',
+      title: 'Theoretical Buffer Model: Capacity Bounds and Queue Growth',
       excerptOrClaim:
-        'The main goal is to govern the exchange of stream data across an asynchronous boundary without buffer overflows.',
-      confidenceScore: 0.98,
+        'In any finite computational system, when the arrival rate exceeds the service rate without feedback, queue length grows without bound until physical resources are exhausted.',
+      qualityNotes:
+        'Synthetic analytical model demonstrating fundamental physical capacity constraints; not an empirical measurement.',
+      confidenceScore: 0.9,
     },
   ],
   relationships: [],
@@ -45,7 +47,7 @@ export const neutralFundamentalKnowledge: EngineeringKnowledgeItem = {
 export const neutralFailurePatternKnowledge: EngineeringKnowledgeItem = {
   id: 'pattern-unbounded-consumer-overflow',
   levels: ['failure_pattern'],
-  title: 'Unbounded In-Memory Accumulation under Downstream Slowdown',
+  title: 'Synthetic Failure Pattern: Unbounded In-Process Buffer Accumulation Under Downstream Lag',
   description:
     'When an asynchronous consumer suffers a latency degradation or downstream dependency stall, an unbounded in-process buffer absorbs the incoming stream until the runtime exhausts memory.',
   dimensions: [
@@ -59,23 +61,25 @@ export const neutralFailurePatternKnowledge: EngineeringKnowledgeItem = {
   ],
   failureMechanisms: [
     'Heap allocation exhaustion',
-    'Garbage collection thrashing leading to total application unresponsiveness',
+    'Garbage collection thrashing leading to application unresponsiveness',
   ],
   mitigations: [
     'Bound in-memory channel capacity',
-    'Temporarily stop reading from transport layer (TCP pause)',
+    'Temporarily stop reading from transport layer (TCP socket pause)',
   ],
   verificationIdeas: [
     'Pause consumer worker loop during high traffic ingress and verify transport flow control engages',
   ],
   evidence: [
     {
-      id: 'ev-pattern-01',
-      sourceType: 'postmortem',
-      title: 'Distributed System Incident: In-Process Buffer Starvation',
+      id: 'ev-pattern-analysis-01',
+      sourceType: 'manual_analysis',
+      title: 'Demonstration Pattern: In-Memory Queue Accumulation Under Backpressure Absence',
       excerptOrClaim:
-        'Lack of backpressure caused event ingestion nodes to buffer 4GB of messages within 30 seconds, triggering an unrecoverable SIGKILL from the kernel.',
-      confidenceScore: 0.95,
+        'Lack of backpressure flow control across asynchronous producer-consumer boundaries leads to memory buffer saturation during consumer slowdowns.',
+      qualityNotes:
+        'Synthetic evaluation fixture illustrating consumer-lag failure patterns; not derived from an empirical production incident postmortem.',
+      confidenceScore: 0.85,
     },
   ],
   relationships: [
@@ -109,18 +113,21 @@ export const neutralTechnologySpecificKnowledge: EngineeringKnowledgeItem = {
     'Respect write() boolean return and await drain event',
   ],
   verificationIdeas: [
-    'Instrument stream writableBuffer length and write return value under artificial stream choke',
+    'Instrument stream writableLength and write return value under artificial stream choke',
   ],
   evidence: [
     {
-      id: 'ev-tech-01',
+      id: 'ev-tech-nodejs-docs-01',
       sourceType: 'official_documentation',
-      title: 'Node.js Official Documentation: Stream Backpressure Explained',
+      title: 'Node.js Stream API Documentation: writable.write(chunk[, encoding][, callback])',
       technology: 'Node.js',
-      versionApplicability: '>=14.0.0',
-      sourceUrlOrIdentifier: 'https://nodejs.org/en/docs/guides/backpressuring-in-streams/',
-      excerptOrClaim: 'If write() returns false, do not write additional data until drain is emitted.',
-      confidenceScore: 1.0,
+      versionApplicability: '>=0.10.0',
+      sourceUrlOrIdentifier: 'https://nodejs.org/api/stream.html#writablewritechunk-encoding-callback',
+      excerptOrClaim:
+        'The return value is true if the internal buffer is less than the highWaterMark configured when the stream was created. If false, further writes should stop until the drain event is emitted.',
+      qualityNotes:
+        'Authoritative official Node.js API documentation describing stream.Writable write/drain flow control semantics.',
+      confidenceScore: 0.95,
     },
   ],
   relationships: [
@@ -133,7 +140,7 @@ export const neutralTechnologySpecificKnowledge: EngineeringKnowledgeItem = {
   technologyMetadata: {
     technology: 'Node.js',
     runtimeEnvironment: 'V8 Engine',
-    versionRange: '>=14.0.0',
+    versionRange: '>=0.10.0',
   },
 };
 
