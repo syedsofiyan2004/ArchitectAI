@@ -7,41 +7,36 @@ interface HeaderProps {
 
 export const Header: React.FC<HeaderProps> = ({ config }) => {
   return (
-    <header className="app-header">
-      <div className="header-left">
-        <div className="logo-badge">
-          <svg className="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.2} d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
+    <header className="top-bar" role="banner">
+      <div className="brand-section">
+        <div className="brand-logo" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.4} d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
           </svg>
         </div>
-        <div>
-          <div className="title-row">
-            <h1 className="app-title">ArchitectAI</h1>
-            <span className="badge-prototype">Kernel v0.1.0</span>
-          </div>
-          <p className="app-subtitle">
-            Engineering intelligence for discovering system, reliability, and concurrency unknowns
-          </p>
+        <div className="brand-title-wrap">
+          <span className="brand-name">ArchitectAI</span>
+          <span className="brand-version font-mono">v0.1.0</span>
         </div>
+        <span className="brand-tagline">Engineering Intelligence Cockpit</span>
       </div>
 
-      <div className="header-right">
+      <div className="top-bar-controls">
         {config ? (
-          <div className="config-indicators">
-            <div className="status-pill">
-              <span className="status-dot"></span>
-              <span className="status-label">Mode:</span>
-              <span className="status-value font-mono">
-                {config.mode === 'remote-model' ? `Model Reasoning (${config.modelName})` : 'Deterministic Demonstration'}
+          <div className="header-status-group">
+            <div className="status-badge" title={`Provider: ${config.providerName}`}>
+              <span className="status-dot live" aria-hidden="true"></span>
+              <span className="status-label">
+                {config.mode === 'remote-model' ? `Model: ${config.modelName}` : 'Deterministic Kernel'}
               </span>
             </div>
-            <div className="status-pill secondary">
-              <span className="status-label">Knowledge Base:</span>
-              <span className="status-value font-mono">{config.knowledgeItemsCount} items</span>
+            <div className="status-badge secondary">
+              <span className="status-label font-mono">{config.knowledgeItemsCount} Primitives</span>
             </div>
           </div>
         ) : (
-          <div className="status-pill loading">
+          <div className="status-badge loading">
+            <span className="status-dot pending" aria-hidden="true"></span>
             <span className="status-label">Connecting to kernel...</span>
           </div>
         )}

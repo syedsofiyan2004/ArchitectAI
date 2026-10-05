@@ -4,13 +4,13 @@ import {
   ImplementationPlan,
   RepositoryWorkspace,
 } from '@architectai/domain';
-import { AgentInfo, PlanExecutionOutput } from '../types.js';
+import { AgentInfo, PlanExecutionOutput } from '../types';
 
 interface ImplementationViewProps {
   contract: EngineeringContract;
 }
 
-export function ImplementationView({ contract }: ImplementationViewProps) {
+export const ImplementationView: React.FC<ImplementationViewProps> = ({ contract }) => {
   const [repoPath, setRepoPath] = useState<string>('.');
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('codex-cli');
@@ -99,90 +99,112 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
   };
 
   return (
-    <div className="implementation-view">
-      <div className="section-header card">
-        <div className="section-label">
-          <span className="dot-indicator green"></span>
-          <span>Milestone 2 • Engineering Execution</span>
+    <div className="implementation-container">
+      <div className="section-intro">
+        <div>
+          <h2 className="section-heading">Engineering Execution Cockpit</h2>
+          <p className="section-subtext">
+            Compiles this Engineering Contract into bounded, traceable implementation tasks, runs them
+            through an isolated Git worktree via your chosen coding agent, and captures native diffs
+            without touching your working branch.
+          </p>
         </div>
-        <h2>Automated Task Compilation & Isolated Agent Execution</h2>
-        <p className="section-description">
-          Compiles this EngineeringContract into bounded, traceable implementation tasks, runs them through an isolated Git worktree with your chosen coding agent, and captures real diffs and native test checks without modifying your active branch.
-        </p>
       </div>
 
       {error && (
-        <div className="error-banner card">
-          <span className="error-icon">⚠️</span>
+        <div className="error-banner" role="alert">
+          <span className="error-icon" aria-hidden="true">⚠️</span>
           <span className="error-message">{error}</span>
         </div>
       )}
 
-      {/* Target Repo & Preparation Setup */}
-      <div className="composer-card card">
-        <h3 className="composer-heading">1. Target Workspace & Agent Configuration</h3>
-        <div className="form-grid">
-          <div className="form-group">
-            <label className="input-label">Target Git Repository Path:</label>
+      {/* Target Repo & Agent Setup */}
+      <div className="surface-card setup-card">
+        <h3 className="card-section-title">1. Workspace & Coding Agent Target</h3>
+        <div className="setup-fields-grid">
+          <div className="field-group">
+            <label className="field-label" htmlFor="repo-path">
+              Target Git Repository Directory
+            </label>
             <input
+              id="repo-path"
               type="text"
-              className="text-input font-mono"
+              className="field-input font-mono"
               value={repoPath}
               onChange={(e) => setRepoPath(e.target.value)}
               placeholder="e.g. . or /path/to/repo"
             />
           </div>
 
-          <div className="form-group">
-            <label className="input-label">Coding Agent Adapter:</label>
+          <div className="field-group">
+            <label className="field-label" htmlFor="agent-select">
+              Coding Agent Adapter
+            </label>
             <select
-              className="text-input"
+              id="agent-select"
+              className="field-input"
               value={selectedAgentId}
               onChange={(e) => setSelectedAgentId(e.target.value)}
             >
               {agents.map((agent) => (
                 <option key={agent.id} value={agent.id}>
-                  {agent.name} {agent.available ? `(${agent.version || 'Available'})` : `[Unavailable: ${agent.reason || 'Not Found'}]`}
+                  {agent.name}{' '}
+                  {agent.available
+                    ? `(${agent.version || 'Available'})`
+                    : `[Unavailable: ${agent.reason || 'Not Found'}]`}
                 </option>
               ))}
             </select>
           </div>
         </div>
 
-        <div className="action-row">
+        <div className="setup-actions-bar">
           <button
             type="button"
             className="btn-primary"
             onClick={handleCompilePlan}
             disabled={isCompiling || isExecuting}
           >
-            {isCompiling ? 'Compiling Tasks...' : 'Prepare Implementation Plan'}
+            {isCompiling ? (
+              <>
+                <span className="spinner" aria-hidden="true"></span>
+                <span>Compiling Tasks...</span>
+              </>
+            ) : (
+              'Prepare Implementation Plan'
+            )}
           </button>
         </div>
 
         {workspace && (
-          <div className="workspace-signals-card" style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid var(--border-color)' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>Detected Workspace Signals:</h4>
-            <div className="summary-meta-grid">
-              <div className="meta-item">
-                <span className="meta-key">Branch:</span>
-                <span className="meta-val font-mono">{workspace.currentBranch}</span>
+          <div className="workspace-signals-box">
+            <div className="signals-label">Detected Repository Context:</div>
+            <div className="signals-grid">
+              <div className="signal-item">
+                <span className="signal-key">Current Branch:</span>
+                <span className="signal-val font-mono">{workspace.currentBranch}</span>
               </div>
-              <div className="meta-item">
-                <span className="meta-key">HEAD Commit:</span>
-                <span className="meta-val font-mono">{workspace.headCommit.slice(0, 8)}</span>
+              <div className="signal-item">
+                <span className="signal-key">HEAD Commit:</span>
+                <span className="signal-val font-mono">{workspace.headCommit.slice(0, 8)}</span>
               </div>
-              <div className="meta-item">
-                <span className="meta-key">Status:</span>
-                <span className="meta-val font-mono">{workspace.isClean ? 'Clean Working Tree' : 'Dirty Working Tree'}</span>
+              <div className="signal-item">
+                <span className="signal-key">Working Tree:</span>
+                <span className="signal-val font-mono">
+                  {workspace.isClean ? 'Clean Working Tree' : 'Uncommitted Changes Present'}
+                </span>
               </div>
-              <div className="meta-item">
-                <span className="meta-key">Languages:</span>
-                <span className="meta-val">{workspace.detectedLanguages.join(', ') || 'General'}</span>
+              <div className="signal-item">
+                <span className="signal-key">Languages:</span>
+                <span className="signal-val">
+                  {workspace.detectedLanguages.join(', ') || 'General'}
+                </span>
               </div>
-              <div className="meta-item">
-                <span className="meta-key">Frameworks:</span>
-                <span className="meta-val">{workspace.detectedFrameworks.join(', ') || 'Standard Library'}</span>
+              <div className="signal-item">
+                <span className="signal-key">Frameworks:</span>
+                <span className="signal-val">
+                  {workspace.detectedFrameworks.join(', ') || 'Standard Library'}
+                </span>
               </div>
             </div>
           </div>
@@ -191,61 +213,60 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
 
       {/* Implementation Plan View */}
       {plan && (
-        <div className="plan-section card">
-          <div className="section-label">
-            <span className="dot-indicator green"></span>
-            <span>2. Bounded Implementation Plan ({plan.tasks.length} Tasks)</span>
+        <div className="surface-card plan-card">
+          <div className="plan-header">
+            <div>
+              <div className="sub-section-label">Bounded Implementation Plan</div>
+              <h3 className="plan-title">{plan.summary}</h3>
+            </div>
+            <span className="grounding-count-pill font-mono">
+              {plan.tasks.length} Bounded Tasks
+            </span>
           </div>
-          <h3 style={{ margin: '0.5rem 0 1rem 0' }}>{plan.summary}</h3>
 
-          <div className="tasks-grid" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            {plan.tasks.map((task, index) => (
-              <div key={task.id} className="task-card" style={{ padding: '1rem', background: 'var(--bg-card-secondary, #1a202c)', borderRadius: '6px', border: '1px solid var(--border-color)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <span className="badge font-mono" style={{ background: '#2563eb', color: '#fff', padding: '2px 8px', borderRadius: '4px' }}>
-                      {task.id}
-                    </span>
-                    <strong style={{ fontSize: '1rem' }}>{task.title}</strong>
+          <div className="tasks-stack">
+            {plan.tasks.map((task) => (
+              <div key={task.id} className="task-surface">
+                <div className="task-header-row">
+                  <div className="task-title-group">
+                    <span className="task-id font-mono">{task.id}</span>
+                    <strong className="task-name">{task.title}</strong>
                   </div>
-                  <span className={`badge-status font-mono ${task.status}`}>
+                  <span className={`task-status-pill font-mono ${task.status}`}>
                     {task.status.toUpperCase()}
                   </span>
                 </div>
 
-                <p style={{ margin: '0.5rem 0', color: 'var(--text-secondary)' }}>
-                  {task.objective}
-                </p>
+                <p className="task-objective">{task.objective}</p>
 
-                <div className="trace-row" style={{ fontSize: '0.8rem', color: '#93c5fd', margin: '0.5rem 0' }}>
-                  <strong>Traceability: </strong>
-                  Concerns: [{task.sourceConcernIds.join(', ') || 'None'}] •
-                  Decisions: [{task.sourceDecisionIds.join(', ') || 'None'}] •
-                  Invariants: [{task.sourceInvariantIds.join(', ') || 'None'}]
+                <div className="task-traceability font-mono">
+                  <span>Concerns: [{task.sourceConcernIds.join(', ') || 'None'}]</span>
+                  <span> • Decisions: [{task.sourceDecisionIds.join(', ') || 'None'}]</span>
+                  <span> • Invariants: [{task.sourceInvariantIds.join(', ') || 'None'}]</span>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                  <div>
-                    <span style={{ color: '#10b981', fontWeight: 600 }}>Allowed Files:</span>
-                    <ul style={{ margin: '0.2rem 0', paddingLeft: '1.2rem' }}>
+                <div className="task-boundaries-grid">
+                  <div className="boundary-box allowed">
+                    <span className="boundary-label">Allowed Files:</span>
+                    <ul className="boundary-list font-mono">
                       {task.allowedFiles.map((f, i) => (
-                        <li key={i} className="font-mono">{f}</li>
+                        <li key={i}>{f}</li>
                       ))}
                     </ul>
                   </div>
-                  <div>
-                    <span style={{ color: '#ef4444', fontWeight: 600 }}>Excluded Files:</span>
-                    <ul style={{ margin: '0.2rem 0', paddingLeft: '1.2rem' }}>
+                  <div className="boundary-box excluded">
+                    <span className="boundary-label">Excluded Files:</span>
+                    <ul className="boundary-list font-mono">
                       {task.excludedFiles.map((f, i) => (
-                        <li key={i} className="font-mono">{f}</li>
+                        <li key={i}>{f}</li>
                       ))}
                     </ul>
                   </div>
                 </div>
 
-                <div style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>
-                  <strong>Acceptance Criteria:</strong>
-                  <ul style={{ margin: '0.2rem 0', paddingLeft: '1.2rem' }}>
+                <div className="acceptance-box">
+                  <span className="acceptance-label">Acceptance Criteria:</span>
+                  <ul className="acceptance-list">
                     {task.acceptanceCriteria.map((ac, i) => (
                       <li key={i}>{ac}</li>
                     ))}
@@ -256,19 +277,22 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
           </div>
 
           {/* User Approval Gate */}
-          <div className="approval-gate card" style={{ marginTop: '1.5rem', background: '#0f172a', border: '1px solid #3b82f6', padding: '1rem' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0', color: '#60a5fa' }}>🔒 User Approval Gate</h4>
-            <p style={{ margin: '0 0 1rem 0', fontSize: '0.9rem', color: '#cbd5e1' }}>
-              Execution will occur in an isolated Git worktree on dedicated branch: <code className="font-mono">architectai/run-xxx</code>. Your current branch (<code className="font-mono">{workspace?.currentBranch || 'main'}</code>) will NOT be modified. Automatic merge and push to remote are disabled.
+          <div className="approval-banner">
+            <div className="approval-title">🔒 User Approval Gate</div>
+            <p className="approval-desc">
+              Execution will occur in an isolated Git worktree on dedicated branch:{' '}
+              <code className="font-mono">architectai/run-xxx</code>. Your current branch (
+              <code className="font-mono">{workspace?.currentBranch || 'main'}</code>) will NOT be
+              modified. Automatic merge and push to remote are disabled.
             </p>
 
-            <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginBottom: '1rem' }}>
+            <label className="approval-checkbox-label">
               <input
                 type="checkbox"
                 checked={userApproved}
                 onChange={(e) => setUserApproved(e.target.checked)}
               />
-              <span style={{ fontWeight: 500 }}>I approve running the coding agent adapter on the isolated worktree</span>
+              <span>I approve running the coding agent adapter in the isolated worktree</span>
             </label>
 
             <button
@@ -276,23 +300,33 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
               className="btn-primary"
               onClick={handleExecutePlan}
               disabled={!userApproved || isExecuting}
-              style={{ background: userApproved ? '#16a34a' : undefined }}
+              style={{
+                background: userApproved ? '#16a34a' : undefined,
+                borderColor: userApproved ? '#22c55e' : undefined,
+              }}
             >
-              {isExecuting ? 'Executing Tasks in Isolated Worktree...' : 'Approve & Execute Implementation'}
+              {isExecuting ? (
+                <>
+                  <span className="spinner" aria-hidden="true"></span>
+                  <span>Executing Tasks in Isolated Worktree...</span>
+                </>
+              ) : (
+                'Approve & Execute Implementation'
+              )}
             </button>
           </div>
         </div>
       )}
 
-      {/* Execution Results View */}
+      {/* Execution Results & Diff */}
       {executionOutput && (
-        <div className="execution-output-section card" style={{ marginTop: '1.5rem' }}>
-          <div className="section-label">
-            <span className="dot-indicator green"></span>
-            <span>3. Execution Results & Git Diff</span>
+        <div className="surface-card execution-results-card">
+          <div className="results-header">
+            <div className="sub-section-label">Execution Results & Verified Git Diff</div>
+            <h3 className="results-title">Worktree Run: {executionOutput.runId}</h3>
           </div>
 
-          <div className="summary-meta-grid" style={{ margin: '1rem 0' }}>
+          <div className="execution-meta-grid">
             <div className="meta-item">
               <span className="meta-key">Isolated Branch:</span>
               <span className="meta-val font-mono">{executionOutput.isolatedBranch}</span>
@@ -300,48 +334,58 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
             <div className="meta-item">
               <span className="meta-key">Original Branch:</span>
               <span className="meta-val font-mono">
-                {executionOutput.originalBranch} {executionOutput.originalBranchUntouched ? '✓ (UNTOUCHED)' : '⚠️ MODIFIED'}
+                {executionOutput.originalBranch}{' '}
+                {executionOutput.originalBranchUntouched ? '✓ (UNTOUCHED)' : '⚠️ MODIFIED'}
               </span>
             </div>
             <div className="meta-item">
-              <span className="meta-key">Agent Used:</span>
+              <span className="meta-key">Coding Agent:</span>
               <span className="meta-val">{executionOutput.agentName}</span>
             </div>
             <div className="meta-item">
-              <span className="meta-key">Task Status:</span>
-              <span className="meta-val badge-status">
+              <span className="meta-key">Completion Status:</span>
+              <span
+                className={`status-pill ${
+                  executionOutput.allTasksCompleted ? 'grounded' : 'critical'
+                }`}
+              >
                 {executionOutput.allTasksCompleted ? 'ALL COMPLETED' : 'PARTIAL / FAILED'}
               </span>
             </div>
           </div>
 
           {/* Changed Files */}
-          <div style={{ margin: '1rem 0' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0' }}>Changed Files ({executionOutput.diffReport.changedFiles.length}):</h4>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+          <div className="changed-files-box">
+            <div className="changed-label">
+              Changed Files ({executionOutput.diffReport.changedFiles.length}):
+            </div>
+            <div className="changed-tags">
               {executionOutput.diffReport.changedFiles.map((f, i) => (
-                <span key={i} className="font-mono badge" style={{ background: '#334155', color: '#f8fafc', padding: '4px 8px', borderRadius: '4px' }}>
+                <span key={i} className="tag tag-knowledge font-mono">
                   {f}
                 </span>
               ))}
             </div>
           </div>
 
-          {/* Execution Checks (Build / Test) */}
+          {/* Native Repository Checks */}
           {executionOutput.executionChecks.length > 0 && (
-            <div style={{ margin: '1rem 0' }}>
-              <h4 style={{ margin: '0 0 0.5rem 0' }}>Native Repository Checks:</h4>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+            <div className="checks-box">
+              <div className="checks-label">Native Repository Test & Build Checks:</div>
+              <div className="checks-stack">
                 {executionOutput.executionChecks.map((check, i) => (
-                  <div key={i} style={{ padding: '0.75rem', background: check.passed ? '#064e3b' : '#7f1d1d', borderRadius: '4px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span className="font-mono" style={{ fontWeight: 600 }}>{check.command}</span>
-                      <span>{check.passed ? '✓ PASSED' : '× FAILED'} ({check.durationMs}ms)</span>
+                  <div
+                    key={i}
+                    className={`check-item ${check.passed ? 'passed' : 'failed'}`}
+                  >
+                    <div className="check-title-row font-mono">
+                      <span>{check.command}</span>
+                      <span>
+                        {check.passed ? '✓ PASSED' : '× FAILED'} ({check.durationMs}ms)
+                      </span>
                     </div>
                     {check.stdout && (
-                      <pre className="font-mono" style={{ margin: '0.5rem 0 0 0', fontSize: '0.8rem', whiteSpace: 'pre-wrap' }}>
-                        {check.stdout}
-                      </pre>
+                      <pre className="check-output font-mono">{check.stdout}</pre>
                     )}
                   </div>
                 ))}
@@ -349,21 +393,10 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
             </div>
           )}
 
-          {/* Raw Git Diff */}
-          <div style={{ margin: '1.5rem 0 0 0' }}>
-            <h4 style={{ margin: '0 0 0.5rem 0' }}>Git Diff:</h4>
-            <pre
-              className="font-mono"
-              style={{
-                background: '#020617',
-                color: '#e2e8f0',
-                padding: '1rem',
-                borderRadius: '6px',
-                overflowX: 'auto',
-                fontSize: '0.85rem',
-                maxHeight: '400px',
-              }}
-            >
+          {/* Git Diff */}
+          <div className="diff-section">
+            <div className="diff-label">Git Unified Diff:</div>
+            <pre className="diff-box font-mono">
               {executionOutput.diffReport.diff || 'No textual diff (files staged / clean)'}
             </pre>
           </div>
@@ -371,4 +404,4 @@ export function ImplementationView({ contract }: ImplementationViewProps) {
       )}
     </div>
   );
-}
+};

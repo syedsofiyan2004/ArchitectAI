@@ -88,116 +88,145 @@ export function App() {
   };
 
   return (
-    <div className="app-container">
+    <div className="app-shell">
       <Header config={config} />
 
-      <main className="main-content">
-        <Composer
-          scenarios={scenarios}
-          onSubmit={handleAnalyze}
-          isLoading={isLoading}
-        />
+      <div className="workspace-layout">
+        {/* Left Workflow Rail */}
+        <aside className="workflow-rail" aria-label="Workflow Navigation">
+          <div className="rail-section-label">Engineering Workflow</div>
+          <nav className="rail-nav">
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'overview' ? 'active' : ''}`}
+              onClick={() => setActiveTab('overview')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">📋</span>
+                <span>Overview</span>
+              </div>
+            </button>
 
-        {error && (
-          <div className="error-banner card">
-            <span className="error-icon">⚠️</span>
-            <span className="error-message">{error}</span>
-          </div>
-        )}
-
-        {result && (
-          <StageProgress stages={result.stages} isLoading={isLoading} />
-        )}
-
-        {result && (
-          <div className="results-wrapper">
-            <nav className="tab-navigation">
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`}
-                onClick={() => setActiveTab('overview')}
-              >
-                <span>Architecture Overview</span>
-              </button>
-
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'unknowns' ? 'active' : ''}`}
-                onClick={() => setActiveTab('unknowns')}
-              >
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'unknowns' ? 'active' : ''}`}
+              onClick={() => setActiveTab('unknowns')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">🔍</span>
                 <span>Unknown-Unknowns</span>
-                <span className="tab-badge font-mono">
+              </div>
+              {result && (
+                <span className="rail-badge font-mono">
                   {result.contract.discoveredConcerns.length}
                 </span>
-              </button>
+              )}
+            </button>
 
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'knowledge' ? 'active' : ''}`}
-                onClick={() => setActiveTab('knowledge')}
-              >
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'knowledge' ? 'active' : ''}`}
+              onClick={() => setActiveTab('knowledge')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">🧠</span>
                 <span>3-Level Knowledge</span>
-                <span className="tab-badge font-mono">L1-L3</span>
-              </button>
+              </div>
+              <span className="rail-badge font-mono">L1-L3</span>
+            </button>
 
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'decisions' ? 'active' : ''}`}
-                onClick={() => setActiveTab('decisions')}
-              >
-                <span>Architecture Decisions</span>
-                <span className="tab-badge font-mono">
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'decisions' ? 'active' : ''}`}
+              onClick={() => setActiveTab('decisions')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">⚖️</span>
+                <span>Decisions & ADRs</span>
+              </div>
+              {result && (
+                <span className="rail-badge font-mono">
                   {result.contract.decisions.length}
                 </span>
-              </button>
+              )}
+            </button>
 
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'verification' ? 'active' : ''}`}
-                onClick={() => setActiveTab('verification')}
-              >
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'verification' ? 'active' : ''}`}
+              onClick={() => setActiveTab('verification')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">🧪</span>
                 <span>Verification Plan</span>
-                <span className="tab-badge font-mono">
+              </div>
+              {result && (
+                <span className="rail-badge font-mono">
                   {result.contract.verificationSpecs.length}
                 </span>
-              </button>
+              )}
+            </button>
 
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'implementation' ? 'active' : ''}`}
-                onClick={() => setActiveTab('implementation')}
-              >
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'implementation' ? 'active' : ''}`}
+              onClick={() => setActiveTab('implementation')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">⚡</span>
                 <span>Implementation</span>
-                <span className="tab-badge font-mono">EXEC</span>
-              </button>
+              </div>
+              <span className="rail-badge font-mono">EXEC</span>
+            </button>
 
-              <button
-                type="button"
-                className={`tab-btn ${activeTab === 'contract' ? 'active' : ''}`}
-                onClick={() => setActiveTab('contract')}
-              >
-                <span>Engineering Contract (JSON)</span>
-              </button>
-            </nav>
+            <button
+              type="button"
+              className={`rail-btn ${activeTab === 'contract' ? 'active' : ''}`}
+              onClick={() => setActiveTab('contract')}
+            >
+              <div className="rail-btn-content">
+                <span className="rail-icon" aria-hidden="true">{'{ }'}</span>
+                <span>Contract JSON</span>
+              </div>
+            </button>
+          </nav>
+        </aside>
 
-            <div className="tab-content">
+        {/* Main Canvas */}
+        <main className="main-canvas" role="main">
+          <Composer
+            scenarios={scenarios}
+            onSubmit={handleAnalyze}
+            isLoading={isLoading}
+          />
+
+          {error && (
+            <div className="error-banner" role="alert">
+              <span className="error-icon" aria-hidden="true">⚠️</span>
+              <span className="error-message">{error}</span>
+            </div>
+          )}
+
+          {(result || isLoading) && (
+            <StageProgress
+              stages={result ? result.stages : []}
+              isLoading={isLoading}
+            />
+          )}
+
+          {result && (
+            <div className="canvas-view-container">
               {activeTab === 'overview' && (
-                <div className="overview-grid">
-                  <div className="overview-summary card">
-                    <div className="section-label">
-                      <span className="dot-indicator green"></span>
-                      <span>Contract Summary</span>
+                <div className="overview-stack">
+                  <div className="surface-card contract-summary-card">
+                    <div className="card-top-tags">
+                      <span className="grounding-pill grounded font-mono">✓ CONTRACT ACCEPTED</span>
+                      <span className="contract-id font-mono">ID: {result.contract.id}</span>
                     </div>
-                    <h3 className="summary-title">{result.contract.requirement.rawIntent}</h3>
+
+                    <h2 className="summary-intent">{result.contract.requirement.rawIntent}</h2>
+
                     <div className="summary-meta-grid">
-                      <div className="meta-item">
-                        <span className="meta-key">Contract ID:</span>
-                        <span className="meta-val font-mono">{result.contract.id}</span>
-                      </div>
-                      <div className="meta-item">
-                        <span className="meta-key">Status:</span>
-                        <span className="meta-val badge-status font-mono">ACCEPTED</span>
-                      </div>
                       <div className="meta-item">
                         <span className="meta-key">Discovered Unknowns:</span>
                         <span className="meta-val font-mono">
@@ -210,8 +239,14 @@ export function App() {
                           {result.contract.decisions.length} Decisions
                         </span>
                       </div>
+                      <div className="meta-item">
+                        <span className="meta-key">Verification Specs:</span>
+                        <span className="meta-val font-mono">
+                          {result.contract.verificationSpecs.length} Executable Tests
+                        </span>
+                      </div>
                       {result.decomposition && (
-                        <div className="meta-item" style={{ gridColumn: 'span 2' }}>
+                        <div className="meta-item full-span">
                           <span className="meta-key">Semantic Decomposition:</span>
                           <span className="meta-val">{result.decomposition.summary}</span>
                         </div>
@@ -258,13 +293,13 @@ export function App() {
                 <ContractInspector contract={result.contract} />
               )}
             </div>
-          </div>
-        )}
-      </main>
+          )}
+        </main>
+      </div>
 
       <footer className="app-footer">
         <div className="footer-content">
-          <span>ArchitectAI • Engineering-Intelligence Platform Prototype</span>
+          <span>ArchitectAI • Engineering-Intelligence Platform</span>
           <span className="footer-links font-mono">
             Provider Neutral • Three-Level Knowledge • Independent Verification
           </span>

@@ -21,39 +21,42 @@ export const ContractInspector: React.FC<ContractInspectorProps> = ({ contract }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `contract-${contract.id}.json`;
+    a.download = `engineering-contract-${contract.id}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
   return (
-    <div className="inspector-view">
+    <div className="inspector-container">
       <div className="section-intro">
         <div>
-          <h2 className="section-heading">Canonical EngineeringContract (Schema Verified)</h2>
+          <h2 className="section-heading">Canonical Engineering Contract</h2>
           <p className="section-subtext">
-            Standard provider-neutral contract output compliant with EngineeringContractSchema.
+            Standard provider-neutral contract output validated against EngineeringContractSchema.
           </p>
         </div>
         <div className="inspector-actions">
-          <button type="button" className="btn btn-secondary" onClick={handleDownload}>
+          <button type="button" className="btn-secondary" onClick={handleDownload}>
             Download JSON
           </button>
-          <button type="button" className="btn btn-primary" onClick={handleCopy}>
+          <button type="button" className="btn-primary" onClick={handleCopy}>
             {copied ? '✓ Copied to Clipboard' : 'Copy JSON Contract'}
           </button>
         </div>
       </div>
 
-      <div className="json-container card">
-        <div className="json-header">
-          <div className="meta-left">
-            <span className="schema-badge font-mono">zod: EngineeringContractSchema (valid)</span>
-            <span className="contract-id font-mono">ID: {contract.id}</span>
+      <div className="surface-card json-card">
+        <div className="json-header-bar">
+          <div className="schema-pill-group">
+            <span className="grounding-pill grounded font-mono">
+              ✓ Schema Validated
+            </span>
+            <span className="contract-id-pill font-mono">ID: {contract.id}</span>
           </div>
-          <span className="version-pill font-mono">v{contract.version}</span>
+          <span className="version-pill font-mono">Version: {contract.version}</span>
         </div>
-        <pre className="json-code font-mono">
+
+        <pre className="json-pre font-mono">
           <code>{jsonString}</code>
         </pre>
       </div>

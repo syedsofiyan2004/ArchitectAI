@@ -1,77 +1,87 @@
-# ArchitectAI — Kernel Foundation
+# ArchitectAI — Engineering Intelligence Platform
 
 ArchitectAI is an engineering-intelligence platform for builders who can describe what they want but may not know the software-engineering, systems, operating-system, database, networking, security, reliability, or distributed-systems concerns they should have asked about.
 
-This repository currently hosts the foundational kernel established in **BOOTSTRAP TASK 001**.
-
 ---
 
-## What Works Now
+## Quickstart & Local Development
 
-- **Pure Domain Schemas & Types (`@architectai/domain`)**:
-  - Runtime validation (powered by Zod) for:
-    - `RequirementIntent` (capturing incomplete natural-language builder intent)
-    - `EngineeringDimension` (open, extensible taxonomy: bounded resources, concurrency, time windows, side effects, etc.)
-    - `KnowledgeLevel` (L1 Fundamental, L2 Failure Pattern, L3 Technology-Specific)
-    - `KnowledgeEvidence` (source provenance, technology/version applicability, confidence)
-    - `EngineeringKnowledgeItem` (triggers, mechanisms, mitigations, verification ideas)
-    - `ConcernCandidate` (rationale, supporting knowledge, assumptions, confidence, open questions)
-    - `ArchitectureDecision` (options, selected option, rationale, evidence, reconsideration triggers)
-    - `EngineeringInvariant` (enforceable property, severity, blocking status)
-    - `VerificationSpec` (preconditions, stimulus, expected property, evidence, automatable status)
-    - `EngineeringContract` (complete aggregated architectural specification)
-    - `EvaluationCase` & `EvaluationResult` (deterministic evaluation criteria)
-- **Generic Knowledge Repository (`@architectai/knowledge`)**:
-  - Provider-neutral, in-memory repository implementation.
-  - Queries uniformly across knowledge levels, engineering dimensions, and technology metadata.
-  - Neutral non-rate-limiter evaluation fixtures (bounded memory backpressure across L1, L2, L3).
-- **Application Orchestration Ports (`@architectai/application`)**:
-  - Core interfaces for concern discovery and contract assembly decoupled from concrete AI models.
-- **Provider Abstractions (`@architectai/providers`)**:
-  - Pure port abstractions (`ProviderAdapter`, `ModelCapabilities`, `ProviderRequest`) without vendor SDK dependencies.
-- **Verification Interfaces (`@architectai/verification`)**:
-  - Interfaces for independent verification planning and execution.
-- **Deterministic Eval Runner (`@architectai/evals`)**:
-  - Evaluates whether discovered concerns match expected engineering dimensions, asserts forbidden dimensions are not hallucinated, and validates schema compliance.
-- **Architecture Boundary Tests (`tests/architecture`)**:
-  - Validates that domain packages remain isolated from providers/frameworks.
-  - Validates schema round-tripping and open dimension extensibility without hardcoded switch statements.
-- **CLI Walking Skeleton (`apps/cli`)**:
-  - Deterministic runnable demonstrating end-to-end fixture loading, schema validation, repository querying, contract assembly, serialization, and round-trip deserialization.
-
----
-
-## Development & Verification Commands
-
-ArchitectAI strictly standardizes on `pnpm` workspaces:
+Run the entire platform with a single command:
 
 ```bash
-# Install dependencies with frozen lockfile
-pnpm install --frozen-lockfile
+# 1. Install dependencies
+pnpm install
 
-# Typecheck all packages with TypeScript strict mode
+# 2. Start the ArchitectAI cockpit (backend API & web interface)
+pnpm run dev
+```
+
+Open `http://localhost:3001` in your browser to launch the ArchitectAI Engineering Cockpit.
+
+---
+
+## Core Capabilities (Milestones 1 – 2.5)
+
+### 1. Natural-Language Unknown-Unknown Discovery
+- Ask **"What are you building or changing?"** in plain product language (e.g. *"Limit each authenticated user to 100 API requests per minute"*, *"When my access token expires automatically refresh it and retry"*).
+- Discovers hidden concurrency races, memory saturation, cascading retry storms, cache stampedes, and trust boundary hazards.
+- Keyboard shortcut: **`Ctrl + Enter`** (or `Cmd + Enter`) triggers instant analysis.
+
+### 2. Three-Level Knowledge Causal Reasoning Trail
+- Connects **L1 Fundamentals** (physical invariants: capacity, concurrency, time, trust boundaries) &rarr; **L2 Failure Patterns** (reusable anti-patterns) &rarr; **L3 Technology-Specific Mechanisms** (Redis Lua scripts, OAuth RFC 6749 single-flight replay, Libvips stream pipelines) with authoritative provenance citations.
+
+### 3. Architecture Decision Records (ADRs) & Invariants
+- Synthesizes explicit, enforceable architectural choices with evaluated trade-offs, selected options, rationale, and reconsideration triggers.
+- Formulates non-negotiable invariants and 3-step executable test specifications (Setup, Stimulus, Expected Invariant).
+
+### 4. Milestone 2 Engineering Execution Gate
+- Inspects target Git repositories and workspace signals.
+- Compiles contracts into bounded, traceable implementation tasks with strict file boundaries.
+- Protected by a **User Approval Gate** before executing coding agents in an isolated Git worktree branch (`architectai/run-xxx`). Active working branches remain untouched.
+
+### 5. Premium, Responsive Developer Cockpit (Milestone 2.5)
+- Obsidian/graphite dark design system with disciplined typography and semantic severity badges (Critical, High, Medium, Low).
+- Left workflow navigation rail on desktop, smooth segmented scroll on mobile.
+- Zero horizontal overflow guaranteed across all viewports (from 1920×1080 desktop down to 390×844 mobile).
+
+---
+
+## Verification & Quality Commands
+
+```bash
+# Typecheck all packages
 pnpm run typecheck
 
-# Run unit tests and evaluation suite
+# Run full Vitest suite (unit, integration, and browser UX tests)
 pnpm run test
 
-# Run architecture boundary tests
+# Run architecture boundary isolation tests
 pnpm run test:arch
 
-# Execute deterministic CLI walking skeleton
+# Execute walking skeleton CLI
 pnpm run cli:skeleton
+
+# Build production web client bundle
+pnpm run web:build
 ```
 
 ---
 
-## What Explicitly Does Not Exist Yet (Out of Scope)
+## Repository Structure
 
-The following components are deliberately deferred and **not implemented** in this foundation phase:
-- User interface (web, desktop, or mobile)
-- Real remote AI provider connections (OpenAI, Anthropic, Google, etc.)
-- Vector databases, embeddings, or RAG pipelines
-- User authentication, billing, or cloud deployment infrastructure
-- Production databases / ORM persistence
-- Coding-agent integrations (e.g. Codex, Claude Code, Antigravity adapters)
-- Autonomous self-repair loops or multi-agent swarms
-- Hard-coded problem-specific rules (e.g. rate limiters, OOM handlers) in the core engine
+```
+├── packages/
+│   ├── domain/         # Core schemas, Zod validation, universal dimensions
+│   ├── knowledge/      # 3-level knowledge repository and authoritative fixtures
+│   ├── providers/      # Provider-neutral model adapters and coding agent gateways
+│   ├── application/    # Analysis use cases, git workspace, task compiler, plan executor
+│   └── evals/          # Deterministic evaluation runner
+├── apps/
+│   ├── web/            # Premium React 18 cockpit and Express backend
+│   └── cli/            # Deterministic walking skeleton
+├── tests/
+│   ├── architecture/   # Boundary and schema isolation tests
+│   └── ux/             # Automated Playwright browser UX tests
+└── artifacts/
+    └── ui-review/      # Baseline (before) and post-redesign (after) visual QA screenshots
+```

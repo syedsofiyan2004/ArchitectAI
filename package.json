@@ -10,6 +10,7 @@
   "packageManager": "pnpm@12.8.1",
   "scripts": {
     "build": "tsc -b",
+    "dev": "pnpm --filter @architectai/web dev",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:arch": "vitest run tests/architecture",
@@ -22,6 +23,7 @@
     "@architectai/domain": "workspace:*",
     "@architectai/knowledge": "workspace:*",
     "@types/node": "^22.13.9",
+    "playwright": "^1.63.0",
     "tsx": "^4.19.3",
     "typescript": "^5.8.2",
     "vitest": "^3.0.7"
