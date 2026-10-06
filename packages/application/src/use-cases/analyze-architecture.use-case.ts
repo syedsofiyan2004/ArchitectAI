@@ -150,7 +150,7 @@ Context: ${JSON.stringify(requirement.context)}`,
     );
 
     const l2CandidatePatterns = allRetrieved.filter((item) =>
-      item.levels.includes('failure_pattern')
+      item.levels.includes('failure_pattern') || item.levels.includes('technology_specific')
     );
     const l1Fundamentals = allRetrieved.filter((item) =>
       item.levels.includes('fundamental')

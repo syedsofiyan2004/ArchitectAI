@@ -11,3 +11,4 @@ export * from './reasoning.js';
 export * from './workspace.js';
 export * from './execution.js';
 export * from './repair.js';
+export * from './knowledge-acquisition.js';
