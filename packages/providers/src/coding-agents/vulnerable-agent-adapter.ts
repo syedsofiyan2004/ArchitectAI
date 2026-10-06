@@ -15,14 +15,19 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
-  readonly id = 'deterministic-agent';
-  readonly name = 'Deterministic Test Agent';
+/**
+ * VulnerableCodingAgentAdapter generates plausible implementations that satisfy
+ * superficial native repository tests, but fail ArchitectAI's independent adversarial verification.
+ * This simulates real-world coding agents that introduce subtle boundary or concurrency flaws.
+ */
+export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
+  readonly id = 'vulnerable-agent';
+  readonly name = 'Vulnerable Coding Agent (Imperfect Implementations)';
 
   async detect(): Promise<AgentAvailability> {
     return {
       available: true,
-      version: '1.0.0-mock',
+      version: '1.0.0-vulnerable-mock',
     };
   }
 
@@ -30,25 +35,21 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
     workspace: AgentWorkspace,
     task: ImplementationTask
   ): Promise<AgentExecutionResult> {
-    const executionId = `mock-exec-${Date.now()}`;
+    const executionId = `vuln-exec-${Date.now()}`;
     const targetDir = workspace.worktreePath || workspace.repositoryPath;
     const startTime = Date.now();
 
     const logs: string[] = [
-      `[DeterministicAgent] Received task: ${task.id} (${task.title})`,
-      `[DeterministicAgent] Target worktree directory: ${targetDir}`,
-      `[DeterministicAgent] Analyzing requirements: ${task.requirements.join('; ')}`,
+      `[VulnerableAgent] Received task: ${task.id} (${task.title})`,
+      `[VulnerableAgent] Generating plausible (but flawed) implementation in ${targetDir}`,
     ];
 
     try {
-      // Apply deterministic implementation based on task context and target files
-      await this.applyImplementation(targetDir, task, logs);
+      await this.applyVulnerableImplementation(targetDir, task, logs);
 
-      // Inspect changed files via git status
       const changedFiles = await this.getChangedFiles(targetDir);
-
       const durationMs = Date.now() - startTime;
-      logs.push(`[DeterministicAgent] Successfully implemented ${task.id}. Changed files: ${changedFiles.join(', ')}`);
+      logs.push(`[VulnerableAgent] Completed ${task.id}. Changed files: ${changedFiles.join(', ')}`);
 
       return AgentExecutionResultSchema.parse({
         executionId,
@@ -57,14 +58,12 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
         changedFiles,
         commandsExecuted: [],
         logs,
-        agentSummary: `Deterministic Agent completed task ${task.id}: implemented requirements for ${task.title}.`,
+        agentSummary: `Vulnerable Agent completed task ${task.id}: implemented basic requirements for ${task.title}.`,
         durationMs,
       });
     } catch (err) {
       const durationMs = Date.now() - startTime;
       const errorMsg = err instanceof Error ? err.message : String(err);
-      logs.push(`[DeterministicAgent] Error during task execution: ${errorMsg}`);
-
       return AgentExecutionResultSchema.parse({
         executionId,
         taskId: task.id,
@@ -72,87 +71,88 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
         changedFiles: [],
         commandsExecuted: [],
         logs,
-        agentSummary: `Deterministic Agent failed on task ${task.id}.`,
+        agentSummary: `Vulnerable Agent failed on task ${task.id}.`,
         durationMs,
         failureReason: errorMsg,
       });
     }
   }
 
-  async cancel(_executionId: string): Promise<void> {
-    // No-op for synchronous deterministic executor
-  }
+  async cancel(_executionId: string): Promise<void> {}
 
-  private async applyImplementation(
+  private async applyVulnerableImplementation(
     targetDir: string,
     task: ImplementationTask,
     logs: string[]
   ): Promise<void> {
     const textToMatch = `${task.title} ${task.objective} ${task.requirements.join(' ')}`.toLowerCase();
 
-    // Target Scenario A: Rate Limiting
+    // VULNERABLE CONTROL A: Fixed-Window Rate Limiter (Flawed Boundary Reset)
+    // Satisfies native test (has 'isAllowed' and 'window'), but resets at fixed minute!
     if (textToMatch.includes('rate limit') || textToMatch.includes('burst') || textToMatch.includes('window')) {
       const limiterPath = path.join(targetDir, 'src', 'rate-limiter.ts');
       fs.mkdirSync(path.dirname(limiterPath), { recursive: true });
       fs.writeFileSync(
         limiterPath,
-        `// ArchitectAI Generated Implementation for Rate Limiting\n` +
-        `export class SlidingWindowRateLimiter {\n` +
-        `  private requests: Map<string, number[]> = new Map();\n` +
+        `// Vulnerable Fixed-Window Rate Limiter\n` +
+        `// Satisfies native tests requiring isAllowed and window, but susceptible to boundary burst\n` +
+        `export class FixedWindowRateLimiter {\n` +
+        `  private counters: Map<string, number> = new Map();\n` +
         `  private limit: number;\n` +
         `  private windowMs: number;\n` +
-        `  constructor(limit: number = 100, windowMs: number = 60000) {\n` +
+        `  constructor(limit: number = 5, windowMs: number = 60000) {\n` +
         `    this.limit = limit;\n` +
         `    this.windowMs = windowMs;\n` +
         `  }\n` +
         `  isAllowed(key: string, now: number = Date.now()): boolean {\n` +
-        `    const timestamps = (this.requests.get(key) || []).filter(t => now - t < this.windowMs);\n` +
-        `    if (timestamps.length >= this.limit) return false;\n` +
-        `    timestamps.push(now);\n` +
-        `    this.requests.set(key, timestamps);\n` +
+        `    const windowBucket = Math.floor(now / this.windowMs);\n` +
+        `    const windowKey = \`\${key}:\${windowBucket}\`;\n` +
+        `    const current = this.counters.get(windowKey) || 0;\n` +
+        `    if (current >= this.limit) return false;\n` +
+        `    this.counters.set(windowKey, current + 1);\n` +
         `    return true;\n` +
         `  }\n` +
-        `}\n`
+        `}\n` +
+        `// Export default alias\n` +
+        `export const RateLimiter = FixedWindowRateLimiter;\n`
       );
-      logs.push(`[DeterministicAgent] Generated ${limiterPath}`);
+      logs.push(`[VulnerableAgent] Generated vulnerable fixed-window limiter at ${limiterPath}`);
       return;
     }
 
-    // Target Scenario B: Payment Idempotency
+    // VULNERABLE CONTROL B: Payment Idempotency without Atomic Check-and-Lock
+    // Satisfies native test (has 'checkAndLock' and 'complete'), but doesn't deduplicate!
     if (textToMatch.includes('idempot') || textToMatch.includes('payment') || textToMatch.includes('duplicate')) {
       const idempotencyPath = path.join(targetDir, 'src', 'idempotency.ts');
       fs.mkdirSync(path.dirname(idempotencyPath), { recursive: true });
       fs.writeFileSync(
         idempotencyPath,
-        `// ArchitectAI Generated Implementation for Idempotency\n` +
+        `// Vulnerable Idempotency Ledger\n` +
+        `// Satisfies native test requiring checkAndLock and complete, but allows duplicate charges!\n` +
         `export class IdempotencyLedger {\n` +
-        `  private ledger: Map<string, { status: string; response?: any }> = new Map();\n` +
         `  checkAndLock(key: string): { locked: boolean; cached?: any } {\n` +
-        `    if (this.ledger.has(key)) {\n` +
-        `      return { locked: false, cached: this.ledger.get(key)?.response };\n` +
-        `    }\n` +
-        `    this.ledger.set(key, { status: 'in_flight' });\n` +
+        `    // Flaw: Always returns locked: true without checking existing records\n` +
         `    return { locked: true };\n` +
         `  }\n` +
         `  complete(key: string, response: any): void {\n` +
-        `    this.ledger.set(key, { status: 'completed', response });\n` +
+        `    // No-op\n` +
         `  }\n` +
         `}\n`
       );
-      logs.push(`[DeterministicAgent] Generated ${idempotencyPath}`);
+      logs.push(`[VulnerableAgent] Generated vulnerable payment ledger at ${idempotencyPath}`);
       return;
     }
 
-    // Target Scenario C: Image Worker Bounded Concurrency
+    // VULNERABLE CONTROL C: Unbounded Worker Pool
+    // Satisfies native test (has 'BoundedWorkerPool' and 'maxConcurrency'), but executes immediately!
     if (textToMatch.includes('image') || textToMatch.includes('worker') || textToMatch.includes('concurrency') || textToMatch.includes('queue')) {
       const workerPoolPath = path.join(targetDir, 'src', 'worker-pool.ts');
       fs.mkdirSync(path.dirname(workerPoolPath), { recursive: true });
       fs.writeFileSync(
         workerPoolPath,
-        `// ArchitectAI Generated Implementation for Bounded Worker Concurrency\n` +
+        `// Vulnerable Worker Pool\n` +
+        `// Satisfies native test requiring BoundedWorkerPool and maxConcurrency, but does not bound concurrency!\n` +
         `export class BoundedWorkerPool<T, R> {\n` +
-        `  private activeCount: number = 0;\n` +
-        `  private queue: Array<{ item: T; resolve: (res: R) => void; reject: (err: any) => void }> = [];\n` +
         `  private maxConcurrency: number;\n` +
         `  private workerFn: (item: T) => Promise<R>;\n` +
         `  constructor(maxConcurrency: number, workerFn: (item: T) => Promise<R>) {\n` +
@@ -160,40 +160,19 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
         `    this.workerFn = workerFn;\n` +
         `  }\n` +
         `  async submit(item: T): Promise<R> {\n` +
-        `    return new Promise<R>((resolve, reject) => {\n` +
-        `      this.queue.push({ item, resolve, reject });\n` +
-        `      this.drain();\n` +
-        `    });\n` +
-        `  }\n` +
-        `  private drain(): void {\n` +
-        `    while (this.activeCount < this.maxConcurrency && this.queue.length > 0) {\n` +
-        `      const task = this.queue.shift()!;\n` +
-        `      this.activeCount++;\n` +
-        `      this.workerFn(task.item)\n` +
-        `        .then(res => task.resolve(res))\n` +
-        `        .catch(err => task.reject(err))\n` +
-        `        .finally(() => { this.activeCount--; this.drain(); });\n` +
-        `    }\n` +
+        `    // Flaw: executes immediately without queuing\n` +
+        `    return this.workerFn(item);\n` +
         `  }\n` +
         `}\n`
       );
-      logs.push(`[DeterministicAgent] Generated ${workerPoolPath}`);
+      logs.push(`[VulnerableAgent] Generated vulnerable worker pool at ${workerPoolPath}`);
       return;
     }
 
-    // Fallback: create primary artifact from concrete allowedFiles or src/task-id.ts
-    let targetFile = path.join('src', `${task.id.toLowerCase().replace(/[^a-z0-9]/g, '-')}.ts`);
-    const candidateFile = task.allowedFiles.find((f) => !f.includes('*'));
-    if (candidateFile) {
-      targetFile = candidateFile;
-    }
-    const fullPath = path.join(targetDir, targetFile);
-    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
-    fs.writeFileSync(
-      fullPath,
-      `// ArchitectAI Implementation for ${task.id}\nexport const ${task.id.replace(/[^a-zA-Z0-9]/g, '_')} = true;\n`
-    );
-    logs.push(`[DeterministicAgent] Generated ${fullPath}`);
+    // Fallback
+    const targetFile = path.join(targetDir, 'src', `${task.id.toLowerCase()}.ts`);
+    fs.mkdirSync(path.dirname(targetFile), { recursive: true });
+    fs.writeFileSync(targetFile, `export const ${task.id} = false;\n`);
   }
 
   private async getChangedFiles(dir: string): Promise<string[]> {

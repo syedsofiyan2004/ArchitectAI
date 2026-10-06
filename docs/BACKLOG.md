@@ -38,3 +38,21 @@ This backlog tracks non-blocking enhancements, polish items, and deferred archit
    - *Context*: Add one-click export of an `EngineeringContract` into standard ADR markdown format for repository commit.
 4. **Automated Worktree Pruning Schedule**
    - *Context*: Background routine to prune stale temporary worktrees older than 24 hours.
+
+---
+
+## P2 — Deferred Architectural Items (Post-Milestone 3)
+
+1. **Automatic Repair Loop (Milestone 4)**
+   - *Context*: Automatically feed failed verification evidence and assertion traces back to coding agents to generate precision repairs until invariants hold.
+2. **Full Docker Container Sandbox Enforcement**
+   - *Context*: Transition from local trusted process sandbox to rootless, ephemeral Docker/OCI container execution for untrusted target repositories.
+3. **Multi-Language Verification Adapters (Java / Python / Go / Rust)**
+   - *Context*: Expand the `VerificationExecutor` registry beyond Node.js/TypeScript to support PyTest, JUnit, and Go test harness execution against native projects.
+4. **Distributed Cloud Test Infrastructure**
+   - *Context*: Offload resource-intensive or long-running verification suites to remote container runners (e.g. AWS ECS, Kubernetes jobs).
+5. **Persistent Verification History & Invariant Regression Tracking**
+   - *Context*: Store historical verification runs to detect invariant regressions across multiple iterations or branch merges.
+6. **Large-Scale Fault Injection & Chaos Testing**
+   - *Context*: Incorporate network packet loss, latency spikes, and dependency crash injection into verification harnesses.
+

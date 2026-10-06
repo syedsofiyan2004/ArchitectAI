@@ -7,6 +7,8 @@ import {
   RepositoryWorkspace,
   RepositoryContext,
   AgentExecutionResult,
+  VerificationPlan,
+  VerificationRunResult,
 } from '@architectai/domain';
 
 export interface AgentInfo {
@@ -43,6 +45,9 @@ export interface PlanExecutionOutput {
     rawStatus: string;
   };
   allTasksCompleted: boolean;
+  verificationPlan?: VerificationPlan;
+  verificationRun?: VerificationRunResult;
+  isVerified?: boolean;
   executedAt: string;
 }
 

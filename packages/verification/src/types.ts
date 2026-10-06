@@ -1,47 +1,83 @@
-import { VerificationSpec } from '@architectai/domain';
+import {
+  VerificationCase,
+  VerificationCaseResult,
+  VerificationPlan,
+  VerificationRunResult,
+  VerificationEvidence,
+  VerificationAssertion,
+  VerificationCaseAssertionResult,
+  VerificationVerdict,
+  VerificationOverallStatus,
+  VerificationStrategy,
+} from '@architectai/domain';
 
-export type VerificationExecutionStatus = 'passed' | 'failed' | 'skipped' | 'error';
+export type {
+  VerificationCase,
+  VerificationCaseResult,
+  VerificationPlan,
+  VerificationRunResult,
+  VerificationEvidence,
+  VerificationAssertion,
+  VerificationCaseAssertionResult,
+  VerificationVerdict,
+  VerificationOverallStatus,
+  VerificationStrategy,
+};
 
-export interface VerificationEvidenceCollected {
-  specId: string;
-  name: string;
-  payload: string;
-  timestamp: string;
+export interface VerificationWorkspace {
+  readonly repositoryPath: string;
+  readonly worktreePath: string;
+  readonly tempVerificationDir: string;
+  readonly baseHead: string;
+  readonly branch: string;
 }
 
-export interface SingleVerificationResult {
-  specId: string;
-  status: VerificationExecutionStatus;
-  evidence: VerificationEvidenceCollected[];
+export interface SandboxExecutionOptions {
+  cwd: string;
+  timeoutMs?: number;
+  maxBufferBytes?: number;
+  env?: Record<string, string>;
+}
+
+export interface SandboxExecutionResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
   durationMs: number;
-  errorMessage?: string;
-}
-
-export interface VerificationPlan {
-  id: string;
-  contractId: string;
-  specs: VerificationSpec[];
-  createdAt: string;
-}
-
-export interface VerificationReport {
-  planId: string;
-  contractId: string;
-  allPassed: boolean;
-  totalSpecs: number;
-  passedCount: number;
-  failedCount: number;
-  skippedCount: number;
-  results: SingleVerificationResult[];
-  executedAt: string;
+  timedOut: boolean;
 }
 
 /**
- * VerificationRunner interface.
- * Independent verification executor port for executing verification specifications
- * against concrete implementations.
+ * Execution sandbox abstraction for running verification tasks safely.
+ */
+export interface VerificationSandbox {
+  readonly id: string;
+  executeCommand(
+    command: string,
+    args: string[],
+    options: SandboxExecutionOptions
+  ): Promise<SandboxExecutionResult>;
+}
+
+/**
+ * Verification executor port for executing verification cases.
+ */
+export interface VerificationExecutor {
+  readonly id: string;
+  canExecute(testCase: VerificationCase): boolean;
+  execute(
+    workspace: VerificationWorkspace,
+    testCase: VerificationCase,
+    harnessContent?: string
+  ): Promise<VerificationCaseResult>;
+}
+
+/**
+ * Verification runner interface for executing verification plans.
  */
 export interface VerificationRunner {
-  createPlan(contractId: string, specs: VerificationSpec[]): Promise<VerificationPlan>;
-  executePlan(plan: VerificationPlan): Promise<VerificationReport>;
+  executePlan(
+    plan: VerificationPlan,
+    workspace: VerificationWorkspace
+  ): Promise<VerificationRunResult>;
 }

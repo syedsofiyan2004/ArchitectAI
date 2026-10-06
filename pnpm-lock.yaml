@@ -282,6 +282,9 @@ importers:
       '@architectai/providers':
         specifier: workspace:*
         version: link:../providers
+      '@architectai/verification':
+        specifier: workspace:*
+        version: link:../verification
 
   packages/domain:
     dependencies:

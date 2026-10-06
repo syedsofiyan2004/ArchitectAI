@@ -4,6 +4,8 @@ import {
   WellKnownDimensions,
   EngineeringKnowledgeItemSchema,
   EngineeringContractSchema,
+  VerificationPlanSchema,
+  VerificationRunResultSchema,
 } from './index.js';
 
 describe('Domain Schemas', () => {
@@ -129,4 +131,104 @@ describe('Domain Schemas', () => {
     const roundTripped = EngineeringContractSchema.parse(JSON.parse(serialized));
     expect(roundTripped).toEqual(parsed);
   });
+
+  it('validates executable VerificationPlan, VerificationCase, and VerificationRunResult schemas', () => {
+    const verificationPlan = {
+      id: 'plan-v3-01',
+      contractId: 'contract-001',
+      implementationRunId: 'run-12345',
+      repositoryPath: '/mock/repo',
+      baseHead: 'abcdef0123456789',
+      cases: [
+        {
+          id: 'case-01',
+          title: 'Adversarial Window Boundary Burst',
+          objective: 'Expose 2x quota burst across rolling minute window boundary',
+          failureTarget: 'pattern-fixed-window-burst',
+          strategy: 'node_test_harness' as const,
+          targetInvariantId: 'inv-01',
+          targetSpecId: 'vspec-01',
+          sourceConcernIds: ['concern-01'],
+          sourceDecisionIds: ['decision-01'],
+          preconditions: 'Limiter configured with limit 5 per 60000ms',
+          stimulus: 'Send 5 requests at t=59s and 5 requests at t=61s',
+          expectedProperty: 'Total accepted requests within any 60-second window <= 5',
+          assertions: [
+            {
+              id: 'assert-burst-ceiling',
+              name: 'max_accepted_in_rolling_window',
+              description: 'Accepted requests across boundary must not exceed limit',
+              operator: 'lte' as const,
+              expected: 5,
+              unit: 'requests',
+            },
+          ],
+          evidenceRequirements: ['accepted_count', 'rejected_count', 'timestamps'],
+          timeoutMs: 5000,
+          isAutomatable: true,
+        },
+      ],
+      createdAt: new Date().toISOString(),
+    };
+
+    const parsedPlan = VerificationPlanSchema.parse(verificationPlan);
+    expect(parsedPlan.cases).toHaveLength(1);
+    expect(parsedPlan.cases[0].failureTarget).toBe('pattern-fixed-window-burst');
+
+    const runResult = {
+      runId: 'run-res-01',
+      planId: parsedPlan.id,
+      contractId: parsedPlan.contractId,
+      overallStatus: 'FAILED' as const,
+      isVerified: false,
+      summary: 'Adversarial test exposed window boundary burst violation.',
+      caseResults: [
+        {
+          caseId: 'case-01',
+          targetInvariantId: 'inv-01',
+          verdict: 'FAIL' as const,
+          isBlocking: true,
+          passed: false,
+          summary: 'Accepted 10 requests across window boundary; expected <= 5.',
+          assertions: [
+            {
+              name: 'max_accepted_in_rolling_window',
+              expected: 5,
+              observed: 10,
+              passed: false,
+              message: 'Boundary burst allowed 10 requests, exceeding 5.',
+            },
+          ],
+          evidence: [
+            {
+              id: 'ev-burst-01',
+              caseId: 'case-01',
+              kind: 'counter',
+              name: 'observed_accepted',
+              expected: 5,
+              observed: 10,
+              unit: 'requests',
+              capturedAt: new Date().toISOString(),
+            },
+          ],
+          durationMs: 124,
+          errorDetails: 'Boundary burst invariant violated.',
+        },
+      ],
+      totalCases: 1,
+      passedCases: 0,
+      failedCases: 1,
+      inconclusiveCases: 0,
+      errorCases: 0,
+      skippedCases: 0,
+      executedAt: new Date().toISOString(),
+      durationMs: 140,
+    };
+
+    const parsedRunResult = VerificationRunResultSchema.parse(runResult);
+    expect(parsedRunResult.overallStatus).toBe('FAILED');
+    expect(parsedRunResult.isVerified).toBe(false);
+    expect(parsedRunResult.caseResults[0].verdict).toBe('FAIL');
+  });
 });
+

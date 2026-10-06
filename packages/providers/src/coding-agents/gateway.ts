@@ -1,6 +1,7 @@
 import { CodingAgentAdapter, AgentAvailability } from '../types.js';
 import { CodexCliAgentAdapter } from './codex-cli-adapter.js';
 import { DeterministicCodingAgentAdapter } from './deterministic-agent-adapter.js';
+import { VulnerableCodingAgentAdapter } from './vulnerable-agent-adapter.js';
 
 export interface AgentRegistryEntry {
   adapter: CodingAgentAdapter;
@@ -19,6 +20,7 @@ export class CodingAgentGateway {
       // Default built-in adapters
       this.register(new CodexCliAgentAdapter());
       this.register(new DeterministicCodingAgentAdapter());
+      this.register(new VulnerableCodingAgentAdapter());
     }
   }
 

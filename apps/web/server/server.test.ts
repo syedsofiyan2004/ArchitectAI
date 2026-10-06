@@ -150,5 +150,19 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     const json = await res.json();
     expect(json.error).toContain('Explicit user approval is strictly required');
   });
+
+  it('POST /api/plan/execute rejects missing plan with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/plan/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approved: true,
+      }),
+    });
+
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toContain('ImplementationPlan is required');
+  });
 });
 

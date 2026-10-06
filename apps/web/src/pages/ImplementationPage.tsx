@@ -9,10 +9,16 @@ import {
   FileCode,
   ArrowLeft,
   ChevronRight,
+  ChevronDown,
   GitBranch,
   Terminal,
   AlertTriangle,
   RotateCcw,
+  ShieldCheck,
+  ShieldAlert,
+  ShieldX,
+  HelpCircle,
+  Code,
 } from 'lucide-react';
 import { AnalysisRunRecord, AgentInfo, PlanExecutionOutput } from '../types';
 import { ImplementationPlan, RepositoryWorkspace, ImplementationTask } from '@architectai/domain';
@@ -41,6 +47,7 @@ export const ImplementationPage: React.FC = () => {
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const [userApproved, setUserApproved] = useState<boolean>(false);
   const [executionOutput, setExecutionOutput] = useState<PlanExecutionOutput | null>(run.execution || null);
+  const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Load available coding agents
@@ -108,6 +115,8 @@ export const ImplementationPage: React.FC = () => {
           plan,
           agentId: selectedAgentId,
           approved: true,
+          contract,
+          context: run.context,
         }),
       });
 
@@ -412,6 +421,117 @@ export const ImplementationPage: React.FC = () => {
                     </div>
                     {check.stdout && (
                       <pre className="check-code font-mono">{check.stdout}</pre>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ArchitectAI Independent Adversarial Verification */}
+          {executionOutput.verificationRun && (
+            <div className="verification-results-block">
+              <div className="verification-header-row">
+                <div>
+                  <h3 className="verification-block-title">
+                    ArchitectAI Independent Adversarial Verification
+                  </h3>
+                  <p className="text-secondary">
+                    Independent post-implementation verification evaluates the discovered engineering invariants against the modified worktree.
+                  </p>
+                </div>
+                <div className={`overall-verdict-badge ${executionOutput.verificationRun.overallStatus.toLowerCase()}`}>
+                  {executionOutput.verificationRun.overallStatus === 'VERIFIED' && <ShieldCheck size={16} />}
+                  {executionOutput.verificationRun.overallStatus === 'FAILED' && <ShieldAlert size={16} />}
+                  {executionOutput.verificationRun.overallStatus === 'INCONCLUSIVE' && <HelpCircle size={16} />}
+                  {executionOutput.verificationRun.overallStatus === 'ERROR' && <ShieldX size={16} />}
+                  <span className="font-mono font-bold">
+                    {executionOutput.verificationRun.overallStatus === 'VERIFIED' && 'ARCHITECTAI VERIFIED'}
+                    {executionOutput.verificationRun.overallStatus === 'FAILED' && 'VERIFICATION FAILED'}
+                    {executionOutput.verificationRun.overallStatus === 'INCONCLUSIVE' && 'VERIFICATION INCONCLUSIVE'}
+                    {executionOutput.verificationRun.overallStatus === 'ERROR' && 'VERIFICATION ERROR'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="verification-summary-banner font-mono">
+                {executionOutput.verificationRun.summary}
+              </div>
+
+              <div className="verification-cases-list">
+                {executionOutput.verificationRun.caseResults.map((caseRes) => (
+                  <div key={caseRes.caseId} className={`vcase-card ${caseRes.verdict.toLowerCase()}`}>
+                    <div className="vcase-header">
+                      <div className="vcase-meta">
+                        <span className={`verdict-tag font-mono ${caseRes.verdict.toLowerCase()}`}>
+                          {caseRes.verdict}
+                        </span>
+                        <span className="invariant-id-tag font-mono">{caseRes.targetInvariantId}</span>
+                        <strong className="vcase-title">{caseRes.caseId}</strong>
+                      </div>
+                      <span className="vcase-duration font-mono text-muted">{caseRes.durationMs}ms</span>
+                    </div>
+
+                    <p className="vcase-summary text-secondary">{caseRes.summary}</p>
+
+                    {caseRes.assertions.length > 0 && (
+                      <div className="vcase-assertions-table">
+                        <div className="assertion-row-header font-mono">
+                          <span>ASSERTION</span>
+                          <span>EXPECTED</span>
+                          <span>OBSERVED</span>
+                          <span>OUTCOME</span>
+                        </div>
+                        {caseRes.assertions.map((a, i) => (
+                          <div key={i} className={`assertion-row font-mono ${a.passed ? 'pass' : 'fail'}`}>
+                            <span className="assertion-name">{a.name}</span>
+                            <span className="assertion-val">{String(a.expected)}</span>
+                            <span className={`assertion-val ${a.passed ? 'text-success' : 'text-danger font-bold'}`}>
+                              {String(a.observed)}
+                            </span>
+                            <span className={`assertion-outcome ${a.passed ? 'badge-pass' : 'badge-fail'}`}>
+                              {a.passed ? '✓ PASS' : '✗ FAIL'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {caseRes.artifactContent && (
+                      <div className="vcase-inspector-toggle">
+                        <button
+                          type="button"
+                          className="btn-toggle-harness font-mono"
+                          onClick={() =>
+                            setExpandedCaseId(
+                              expandedCaseId === caseRes.caseId ? null : caseRes.caseId
+                            )
+                          }
+                        >
+                          <Code size={13} />
+                          <span>
+                            {expandedCaseId === caseRes.caseId
+                              ? 'Hide Verification Harness Artifact'
+                              : 'Inspect Generated Test Artifact & Output'}
+                          </span>
+                          <ChevronDown
+                            size={14}
+                            className={expandedCaseId === caseRes.caseId ? 'rotate-180' : ''}
+                          />
+                        </button>
+                        {expandedCaseId === caseRes.caseId && (
+                          <div className="vcase-inspector-content">
+                            <span className="font-mono text-muted text-xs">Generated Verification Harness:</span>
+                            <pre className="harness-pre font-mono">{caseRes.artifactContent}</pre>
+                            {caseRes.stderr && (
+                              <>
+                                <span className="font-mono text-muted text-xs text-danger">Process Stderr:</span>
+                                <pre className="stderr-pre font-mono text-danger">{caseRes.stderr}</pre>
+                              </>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}

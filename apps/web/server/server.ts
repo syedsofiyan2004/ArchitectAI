@@ -290,7 +290,7 @@ export async function createServer() {
   // Execute Implementation Plan (requires explicit user approval)
   app.post('/api/plan/execute', async (req: Request, res: Response) => {
     try {
-      const { plan, agentId, approved } = req.body;
+      const { plan, agentId, approved, contract, context } = req.body;
       if (!approved) {
         return res.status(403).json({
           success: false,
@@ -303,7 +303,13 @@ export async function createServer() {
       }
 
       const validatedPlan = ImplementationPlanSchema.parse(plan);
-      const output = await planExecutor.execute(validatedPlan, agentId);
+      const validatedContract = contract ? EngineeringContractSchema.parse(contract) : undefined;
+      const output = await planExecutor.execute(
+        validatedPlan,
+        agentId,
+        validatedContract,
+        context
+      );
 
       return res.json({
         success: true,

@@ -3,6 +3,8 @@ export * from './ports/contract-assembler.port.js';
 export * from './use-cases/analyze-architecture.use-case.js';
 export * from './use-cases/compile-implementation-plan.use-case.js';
 export * from './use-cases/execute-implementation-plan.use-case.js';
+export * from './use-cases/compile-verification-plan.use-case.js';
+export * from './use-cases/verify-implementation.use-case.js';
 export * from './services/git-workspace.service.js';
 export * from './services/repository-context-builder.js';
 export * from './services/git-isolation.service.js';
