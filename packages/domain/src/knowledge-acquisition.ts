@@ -13,13 +13,79 @@ export const SourceTrustTierSchema = z.enum([
 ]);
 export type SourceTrustTier = z.infer<typeof SourceTrustTierSchema>;
 
+export const VersionApplicabilityKindSchema = z.enum([
+  'EXACT',
+  'RANGE',
+  'SINCE',
+  'UNTIL',
+  'CURRENT_DOCS',
+  'UNKNOWN',
+]);
+export type VersionApplicabilityKind = z.infer<typeof VersionApplicabilityKindSchema>;
+
+export const VersionApplicabilitySchema = z.object({
+  kind: VersionApplicabilityKindSchema.default('UNKNOWN'),
+  rawText: z.string().default('UNKNOWN'),
+  version: z.string().optional(),
+  minVersion: z.string().optional(),
+  maxVersion: z.string().optional(),
+});
+export type VersionApplicability = z.infer<typeof VersionApplicabilitySchema>;
+
+export function parseVersionApplicability(input?: string | VersionApplicability): VersionApplicability {
+  if (!input) {
+    return { kind: 'UNKNOWN', rawText: 'UNKNOWN' };
+  }
+  if (typeof input === 'object' && input.kind) {
+    return input;
+  }
+  const text = String(input).trim();
+  if (!text || text.toUpperCase() === 'UNKNOWN') {
+    return { kind: 'UNKNOWN', rawText: 'UNKNOWN' };
+  }
+  if (text.toUpperCase() === 'CURRENT_DOCS' || text.toLowerCase().includes('current')) {
+    return { kind: 'CURRENT_DOCS', rawText: text };
+  }
+  if (text.startsWith('>=') || text.toLowerCase().startsWith('since ')) {
+    const v = text.replace(/^>=|\bsince\s+/i, '').trim();
+    return { kind: 'SINCE', rawText: text, minVersion: v, version: v };
+  }
+  if (text.startsWith('<=') || text.toLowerCase().startsWith('until ')) {
+    const v = text.replace(/^<=|\buntil\s+/i, '').trim();
+    return { kind: 'UNTIL', rawText: text, maxVersion: v, version: v };
+  }
+  if (text.includes('-') && !text.startsWith('v')) {
+    const parts = text.split('-').map(p => p.trim());
+    return { kind: 'RANGE', rawText: text, minVersion: parts[0], maxVersion: parts[1] };
+  }
+  return { kind: 'EXACT', rawText: text, version: text };
+}
+
+export function isVersionOverlapping(
+  v1: VersionApplicability | string,
+  v2: VersionApplicability | string
+): boolean {
+  const norm1 = typeof v1 === 'string' ? parseVersionApplicability(v1) : v1;
+  const norm2 = typeof v2 === 'string' ? parseVersionApplicability(v2) : v2;
+
+  if (norm1.kind === 'UNKNOWN' || norm2.kind === 'UNKNOWN') return true;
+  if (norm1.kind === 'CURRENT_DOCS' || norm2.kind === 'CURRENT_DOCS') return true;
+
+  if (norm1.kind === 'EXACT' && norm2.kind === 'EXACT') {
+    return norm1.version === norm2.version;
+  }
+
+  // Non-identical exact versions on distinct versions are not overlapping
+  return true;
+}
+
 export const KnowledgeSourceSchema = z.object({
   id: z.string().min(1),
   publisher: z.string().min(1),
   sourceType: z.string().min(1),
   canonicalUrl: z.string().url(),
   technology: z.string().optional(),
-  versionApplicability: z.string().default('UNKNOWN'),
+  versionApplicability: z.union([z.string(), VersionApplicabilitySchema]).default('UNKNOWN'),
   trustTier: SourceTrustTierSchema,
   retrievalPolicy: z.object({
     maxSizeBytes: z.number().positive(),
@@ -67,12 +133,20 @@ export const ExtractedClaimSchema = z.object({
   normalizedClaim: z.string().min(1),
   claimType: ExtractedClaimTypeSchema,
   entities: z.array(z.string()).default([]),
-  versionApplicability: z.string().default('UNKNOWN'),
+  versionApplicability: z.union([z.string(), VersionApplicabilitySchema]).default('UNKNOWN'),
   confidence: z.number().min(0).max(1).default(0.8),
   extractionModel: z.string(),
   extractedAt: z.string().datetime(),
 });
 export type ExtractedClaim = z.infer<typeof ExtractedClaimSchema>;
+
+export const CandidateStatementSchema = z.object({
+  field: z.string(), // e.g. 'mechanism', 'operationalConstraints', 'officialMechanism', 'limits', etc.
+  normalizedStatement: z.string(),
+  supportingClaimIds: z.array(z.string()).default([]),
+  supportType: z.enum(['DIRECT_SOURCE', 'MODEL_INFERENCE']).default('DIRECT_SOURCE'),
+});
+export type CandidateStatement = z.infer<typeof CandidateStatementSchema>;
 
 export const KnowledgeCandidateStateSchema = z.enum([
   'PROPOSED',
@@ -81,6 +155,7 @@ export const KnowledgeCandidateStateSchema = z.enum([
   'REJECTED',
   'CONFLICTED',
   'SUPERSEDED',
+  'REVIEW_REQUIRED',
 ]);
 export type KnowledgeCandidateState = z.infer<typeof KnowledgeCandidateStateSchema>;
 
@@ -97,7 +172,7 @@ export const KnowledgeCandidateSchema = z.object({
   mitigations: z.array(z.string()).default([]),
   assumptions: z.array(z.string()).default([]),
   technologyContext: z.string().optional(),
-  versionApplicability: z.string().default('UNKNOWN'),
+  versionApplicability: z.union([z.string(), VersionApplicabilitySchema]).default('UNKNOWN'),
   sourceClaimIds: z.array(z.string()).min(1),
   proposedRelationships: z.array(z.object({
     targetId: z.string(),
@@ -105,6 +180,9 @@ export const KnowledgeCandidateSchema = z.object({
   })).default([]),
   verificationIdeas: z.array(z.string()).default([]),
   confidence: z.number().min(0).max(1),
+
+  // Claim-level statement grounding
+  fieldStatements: z.array(CandidateStatementSchema).default([]),
 
   // L2 specific
   reusableFailureMechanism: z.string().optional(),
@@ -120,9 +198,12 @@ export type KnowledgeCandidate = z.infer<typeof KnowledgeCandidateSchema>;
 
 export const KnowledgeConflictSchema = z.object({
   id: z.string().min(1),
+  concept: z.string().optional(),
   competingClaimIds: z.array(z.string()).min(2),
   sourceAuthorityLevels: z.array(SourceTrustTierSchema),
-  versionApplicabilities: z.array(z.string()),
+  sourceIds: z.array(z.string()).default([]),
+  snapshotIds: z.array(z.string()).default([]),
+  versionApplicabilities: z.array(z.string()).default([]),
   description: z.string(),
   unresolvedStatus: z.boolean().default(true),
   createdAt: z.string().datetime(),

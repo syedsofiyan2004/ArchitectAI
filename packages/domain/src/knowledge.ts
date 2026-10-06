@@ -48,6 +48,12 @@ export const KnowledgeEvidenceSchema = z.object({
   excerptOrClaim: z.string().min(1),
   confidenceScore: z.number().min(0).max(1).optional(),
   qualityNotes: z.string().optional(),
+  sourceId: z.string().optional(),
+  snapshotId: z.string().optional(),
+  claimId: z.string().optional(),
+  trustTier: z.string().optional(),
+  publisher: z.string().optional(),
+  locator: z.string().optional(),
 });
 
 export type KnowledgeEvidence = z.infer<typeof KnowledgeEvidenceSchema>;
@@ -96,6 +102,7 @@ export const EngineeringKnowledgeItemSchema = z.object({
       runtimeEnvironment: z.string().optional(),
     })
     .optional(),
+  status: z.enum(['ACCEPTED', 'REVIEW_REQUIRED', 'DEPRECATED']).default('ACCEPTED').optional(),
 });
 
 export type EngineeringKnowledgeItem = z.infer<typeof EngineeringKnowledgeItemSchema>;

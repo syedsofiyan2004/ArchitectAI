@@ -113,10 +113,25 @@ export class KnowledgeAcquisitionRegistry {
     return Object.values(this.data.candidates);
   }
 
+  getLatestSnapshotForSource(sourceId: string): SourceSnapshot | undefined {
+    const list = Object.values(this.data.snapshots).filter(s => s.sourceId === sourceId);
+    if (list.length === 0) return undefined;
+    list.sort((a, b) => new Date(b.retrievedAt).getTime() - new Date(a.retrievedAt).getTime());
+    return list[0];
+  }
+
+  getAllSnapshotsForSource(sourceId: string): SourceSnapshot[] {
+    return Object.values(this.data.snapshots).filter(s => s.sourceId === sourceId);
+  }
+
   // --- Conflicts ---
   saveConflict(conflict: KnowledgeConflict): void {
     this.data.conflicts[conflict.id] = conflict;
     this.save();
+  }
+
+  getAllConflicts(): KnowledgeConflict[] {
+    return Object.values(this.data.conflicts);
   }
 
   // --- Runs ---
@@ -137,6 +152,12 @@ export class KnowledgeAcquisitionRegistry {
 
   getAllAcceptedKnowledge(): EngineeringKnowledgeItem[] {
     return Object.values(this.data.acceptedKnowledge);
+  }
+
+  findAcceptedKnowledgeByClaimId(claimId: string): EngineeringKnowledgeItem[] {
+    return Object.values(this.data.acceptedKnowledge).filter(item =>
+      item.evidence.some(ev => ev.claimId === claimId || ev.id === claimId)
+    );
   }
 
   // Debug/Test reset

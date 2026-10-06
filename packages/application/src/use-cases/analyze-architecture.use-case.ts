@@ -255,11 +255,13 @@ ${candidateDescriptions || 'None'}`,
           'High load or edge timing conditions will be experienced in production',
           'Client behaviors may not follow ideal sequential request patterns',
         ],
-        confidence: item.confidence,
-        unresolvedQuestions: item.unresolvedQuestions.length > 0 ? item.unresolvedQuestions : [
-          'What are the peak arrival rates or concurrency limits expected?',
-          'Are distributed nodes or multiple workers processing requests simultaneously?',
-        ],
+        confidence: pattern.status === 'REVIEW_REQUIRED' ? Math.min(item.confidence, 0.4) : item.confidence,
+        unresolvedQuestions: pattern.status === 'REVIEW_REQUIRED'
+          ? ['Underlying source snapshot claims modified or removed; knowledge requires review before full confidence.', ...item.unresolvedQuestions]
+          : (item.unresolvedQuestions.length > 0 ? item.unresolvedQuestions : [
+              'What are the peak arrival rates or concurrency limits expected?',
+              'Are distributed nodes or multiple workers processing requests simultaneously?',
+            ]),
       });
     }
 
