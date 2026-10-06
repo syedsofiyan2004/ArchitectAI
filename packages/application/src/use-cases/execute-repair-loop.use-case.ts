@@ -219,6 +219,10 @@ export class ExecuteRepairLoopUseCase {
     }
     const adapter = agentEntry.adapter;
 
+    // Baseline native checks before any repair attempts
+    const initialNativeChecks = await this.executionChecks.runDiscoveredChecks(worktreeSession.worktreePath);
+    const initiallyPassingNativeChecks = initialNativeChecks.filter(c => c.passed).map(c => c.scriptName);
+
     // Bounded Repair Loop
     let previousVerificationRun = input.initialVerificationRun;
     let finalVerificationRun = input.initialVerificationRun;
@@ -229,23 +233,27 @@ export class ExecuteRepairLoopUseCase {
       const attemptStartTime = Date.now();
 
       // Step A: Create checkpoint in isolated worktree before attempt
-      const checkpointRef = await this.repairSession.createCheckpoint(
+      const attemptCheckpointRef = await this.repairSession.createCheckpoint(
         worktreeSession.worktreePath,
         attemptNumber
       );
 
-      // Step B: Agent executes repair tasks
+      // Step B & C: Agent executes repair tasks and we validate per-task scope
       const agentExecutionResults = [];
       let taskExecutionFailed = false;
+      let policyViolationReason: string | undefined;
+      let currentCheckpointRef = attemptCheckpointRef;
 
-      for (const task of repairPlan.tasks) {
+      for (let i = 0; i < repairPlan.tasks.length; i++) {
+        const task = repairPlan.tasks[i]!;
         task.status = 'in_progress';
+        
         const taskResult = await adapter.executeTask(
           {
             repositoryPath: worktreeSession.worktreePath,
             worktreePath: worktreeSession.worktreePath,
             branch: worktreeSession.branch,
-            headCommit: checkpointRef,
+            headCommit: currentCheckpointRef,
           },
           task as any
         );
@@ -257,20 +265,31 @@ export class ExecuteRepairLoopUseCase {
           taskExecutionFailed = true;
           break;
         }
+
+        // Validate anti-test-gaming policy strictly against THIS TASK'S scope
+        const policyResult = await this.policyValidator.validateAttempt(
+          worktreeSession.worktreePath,
+          task,
+          currentCheckpointRef
+        );
+
+        if (!policyResult.passed) {
+          policyViolationReason = `Task ${task.id} violated policy: ${policyResult.violations.join('; ')}`;
+          break;
+        }
+
+        // Create sub-checkpoint so the next task's diff is evaluated cleanly
+        currentCheckpointRef = await this.repairSession.createCheckpoint(
+          worktreeSession.worktreePath,
+          attemptNumber * 1000 + i
+        );
       }
 
-      // Step C: Validate anti-test-gaming policy
-      const policyResult = await this.policyValidator.validateAttempt(
-        worktreeSession.worktreePath,
-        repairPlan.tasks[0]!,
-        checkpointRef
-      );
-
-      if (!policyResult.passed) {
-        // Rollback invalid patch immediately
+      if (policyViolationReason) {
+        // Rollback invalid patch completely
         await this.repairSession.rollbackToCheckpoint(
           worktreeSession.worktreePath,
-          checkpointRef
+          attemptCheckpointRef
         );
 
         attempts.push({
@@ -279,14 +298,14 @@ export class ExecuteRepairLoopUseCase {
           repairTaskIds: repairPlan.tasks.map((t) => t.id),
           agentExecutionResults,
           changedFiles: [],
-          diffSummary: `REPAIR ATTEMPT REJECTED: ${policyResult.violations.join('; ')}`,
+          diffSummary: `REPAIR ATTEMPT REJECTED: ${policyViolationReason}`,
           nativeChecks: [],
           verificationResult: previousVerificationRun,
           progress: 'UNCHANGED',
           durationMs: Date.now() - attemptStartTime,
-          checkpointRef,
+          checkpointRef: attemptCheckpointRef,
           policyPassed: false,
-          policyViolationReason: policyResult.violations.join('; '),
+          policyViolationReason,
           executedAt: new Date().toISOString(),
         });
         continue;
@@ -296,7 +315,7 @@ export class ExecuteRepairLoopUseCase {
         // Rollback failed task
         await this.repairSession.rollbackToCheckpoint(
           worktreeSession.worktreePath,
-          checkpointRef
+          attemptCheckpointRef
         );
 
         attempts.push({
@@ -310,7 +329,7 @@ export class ExecuteRepairLoopUseCase {
           verificationResult: previousVerificationRun,
           progress: 'UNCHANGED',
           durationMs: Date.now() - attemptStartTime,
-          checkpointRef,
+          checkpointRef: attemptCheckpointRef,
           policyPassed: true,
           executedAt: new Date().toISOString(),
         });
@@ -321,6 +340,36 @@ export class ExecuteRepairLoopUseCase {
       const nativeChecks = await this.executionChecks.runDiscoveredChecks(
         worktreeSession.worktreePath
       );
+
+      // Verify native checks haven't regressed
+      const nativeCheckRegressed = initiallyPassingNativeChecks.some(scriptName => {
+        const check = nativeChecks.find(c => c.scriptName === scriptName);
+        return check && !check.passed;
+      });
+
+      if (nativeCheckRegressed) {
+        await this.repairSession.rollbackToCheckpoint(
+          worktreeSession.worktreePath,
+          attemptCheckpointRef
+        );
+        
+        attempts.push({
+          attemptNumber,
+          diagnosisIds: repairPlan.diagnoses.map((d) => d.id),
+          repairTaskIds: repairPlan.tasks.map((t) => t.id),
+          agentExecutionResults,
+          changedFiles: [],
+          diffSummary: 'REPAIR ATTEMPT REJECTED: Native checks regressed',
+          nativeChecks,
+          verificationResult: previousVerificationRun,
+          progress: 'REGRESSED',
+          durationMs: Date.now() - attemptStartTime,
+          checkpointRef: attemptCheckpointRef,
+          policyPassed: true,
+          executedAt: new Date().toISOString(),
+        });
+        continue;
+      }
 
       // Step E: Re-verify using the EXACT SAME VerificationPlan
       const currentVerificationRun = await this.verifier.execute(input.verificationPlan, {
@@ -339,7 +388,7 @@ export class ExecuteRepairLoopUseCase {
       // Step G: Capture diff against checkpoint
       const { diff, changedFiles } = await this.repairSession.captureAttemptDiff(
         worktreeSession.worktreePath,
-        checkpointRef
+        attemptCheckpointRef
       );
 
       attempts.push({
@@ -353,7 +402,7 @@ export class ExecuteRepairLoopUseCase {
         verificationResult: currentVerificationRun,
         progress,
         durationMs: Date.now() - attemptStartTime,
-        checkpointRef,
+        checkpointRef: attemptCheckpointRef,
         policyPassed: true,
         executedAt: new Date().toISOString(),
       });

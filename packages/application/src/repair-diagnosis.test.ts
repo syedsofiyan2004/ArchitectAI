@@ -340,4 +340,76 @@ describe('DiagnoseVerificationFailureUseCase (Evidence Grounding & Eligibility)'
     expect(diag.isRepairable).toBe(false);
     expect(diag.requiresArchitectureReview).toBe(true);
   });
+  it('falls back to DIAGNOSIS_UNAVAILABLE when provider diagnosis generation fails', async () => {
+    const mockFailingProvider = {
+      id: 'mock-fail-provider',
+      name: 'Fail Provider',
+      getCapabilities: () => ({
+        supportsStructuredOutput: true,
+        supportsStreaming: false,
+        maxContextTokens: 4096,
+      }),
+      generateText: async () => ({ content: '' }),
+      generateStructured: async () => {
+        throw new Error('Provider structured output failed completely');
+      },
+    };
+
+    const failedRun: VerificationRunResult = {
+      runId: 'vrun-1',
+      planId: 'vplan-1',
+      contractId: 'contract-demo-a',
+      executedAt: new Date().toISOString(),
+      durationMs: 120,
+      overallStatus: 'FAILED',
+      isVerified: false,
+      caseResults: [
+        {
+          caseId: 'case-burst-test',
+          targetInvariantId: 'inv-rate-limit-5',
+          strategy: 'node_test_harness',
+          verdict: 'FAIL',
+          summary: 'Rolling limit violated across boundary',
+          durationMs: 120,
+          assertions: [
+            {
+              name: 'max_requests',
+              expected: 5,
+              observed: 10,
+              passed: false,
+              message: 'Expected 5, got 10',
+            },
+          ],
+          evidence: [
+            {
+              id: 'ev-1',
+              kind: 'numeric_metric',
+              name: 'rolling_request_count',
+              expected: 5,
+              observed: 10,
+            },
+          ],
+        },
+      ],
+      nativeCheckResults: [],
+      summary: '1 case failed',
+    };
+
+    const useCase = new DiagnoseVerificationFailureUseCase(mockFailingProvider as any);
+    const diagnoses = await useCase.execute({
+      contract: dummyContract,
+      implementationPlan: dummyPlan,
+      repositoryContext: dummyContext,
+      verificationPlan: dummyVerificationPlan,
+      verificationRun: failedRun,
+    });
+
+    expect(diagnoses).toHaveLength(1);
+    const diag = diagnoses[0]!;
+    expect(diag.classification).toBe('DIAGNOSIS_UNAVAILABLE');
+    expect(diag.isRepairable).toBe(false);
+    expect(diag.expectedMetricValue).toBe(5);
+    expect(diag.observedMetricValue).toBe(10);
+    expect(diag.evidenceReferences).toContain('ev-1');
+  });
 });

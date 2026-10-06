@@ -763,4 +763,203 @@ describe('Milestone 4: Evidence-Driven Diagnosis, Repair & Re-Verification', { t
     expect(errResult.totalAttempts).toBe(0);
     expect(errResult.escalationReason).toContain('Verification infrastructure error');
   });
+  it('Native check regression correctly prevents REPAIRED and rolls back', async () => {
+    const fixture = createDemoFixtureRepo('rate-limiter');
+    cleanups.push(fixture.cleanup);
+
+    const wsService = new GitWorkspaceService();
+    const ws = await wsService.inspectRepository(fixture.repoPath);
+    const builder = new RepositoryContextBuilder();
+    const ctx = await builder.buildContext(rateLimitContract, ws);
+
+    const taskCompiler = new CompileImplementationPlanUseCase(new DeterministicDemoProviderAdapter());
+    const plan = await taskCompiler.execute(rateLimitContract, ctx);
+
+    const gateway = new CodingAgentGateway([new VulnerableCodingAgentAdapter()]);
+    const planExecutor = new ExecuteImplementationPlanUseCase(gateway);
+
+    // Initial implementation is vulnerable but PASSES native tests
+    const initialOutput = await planExecutor.execute(
+      plan,
+      'vulnerable-agent',
+      rateLimitContract,
+      ctx,
+      { preserveWorktreeOnFailure: true }
+    );
+
+    expect(initialOutput.verificationRun?.overallStatus).toBe('FAILED');
+    expect(initialOutput.executionChecks.find((c) => c.scriptName === 'test')?.passed).toBe(true);
+
+    // Now execute repair with 'break_native_checks'
+    const breakingAgent = new VulnerableCodingAgentAdapter();
+    breakingAgent.setBehavior('break_native_checks');
+    const repairGateway = new CodingAgentGateway([breakingAgent]);
+
+    const repairLoopUseCase = new ExecuteRepairLoopUseCase(repairGateway);
+    const repairResult = await repairLoopUseCase.execute({
+      contract: rateLimitContract,
+      implementationPlan: plan,
+      verificationPlan: initialOutput.verificationPlan!,
+      initialVerificationRun: initialOutput.verificationRun!,
+      context: ctx,
+      worktreeSession: initialOutput.worktreeSession!,
+      agentId: 'vulnerable-agent',
+      maxAttempts: 1, // just one attempt is enough to show rejection
+      cleanupWorktreeOnFinish: true,
+    });
+
+    expect(repairResult.outcome).toBe('MAX_ATTEMPTS_REACHED'); // max attempts reached without success
+    expect(repairResult.isRepaired).toBe(false);
+    expect(repairResult.attempts[0]?.progress).toBe('REGRESSED'); // classified as REGRESSED
+    expect(repairResult.attempts[0]?.diffSummary).toContain('Native checks regressed');
+  });
+
+  it('Validates every RepairTask against its own scope independently', async () => {
+    const fixture = createDemoFixtureRepo('rate-limiter');
+    cleanups.push(fixture.cleanup);
+
+    const wsService = new GitWorkspaceService();
+    const ws = await wsService.inspectRepository(fixture.repoPath);
+    const builder = new RepositoryContextBuilder();
+    const ctx = await builder.buildContext(rateLimitContract, ws);
+
+    const dummyPlan = {
+      id: 'plan-test',
+      contractId: rateLimitContract.id,
+      repositoryPath: fixture.repoPath,
+      summary: 'Rate limiter plan',
+      tasks: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    const dummyVPlan = {
+      id: 'vplan-1',
+      contractId: rateLimitContract.id,
+      repositoryPath: fixture.repoPath,
+      cases: [],
+      summary: 'VPlan',
+      createdAt: new Date().toISOString(),
+    };
+
+    const failedRun = {
+      runId: 'vrun-1',
+      planId: 'vplan-1',
+      contractId: rateLimitContract.id,
+      executedAt: new Date().toISOString(),
+      durationMs: 100,
+      overallStatus: 'FAILED' as const,
+      isVerified: false,
+      totalCases: 1,
+      passedCases: 0,
+      failedCases: 1,
+      inconclusiveCases: 0,
+      errorCases: 0,
+      skippedCases: 0,
+      caseResults: [
+        {
+          caseId: 'case-burst-test',
+          targetInvariantId: 'inv-rate-ceiling',
+          strategy: 'node_test_harness' as const,
+          verdict: 'FAIL' as const,
+          isBlocking: true,
+          passed: false,
+          summary: 'Burst',
+          durationMs: 100,
+          assertions: [],
+          evidence: [],
+        },
+      ],
+      nativeCheckResults: [],
+      summary: '1 case failed',
+    };
+
+    // Create a RepairPlan with TWO tasks, each with different allowedFiles
+    const multiTaskRepairPlan = {
+      id: 'repair-plan-multi',
+      contractId: rateLimitContract.id,
+      repositoryPath: fixture.repoPath,
+      diagnoses: [{
+        id: 'diag-1',
+        verificationCaseId: 'case-burst-test',
+        targetInvariantId: 'inv-rate-ceiling',
+        classification: 'IMPLEMENTATION_DEFECT' as const,
+        expectedBehavior: 'x',
+        observedBehavior: 'y',
+        likelyFailureMechanism: 'z',
+        isRepairable: true,
+        requiresArchitectureReview: false,
+        createdAt: new Date().toISOString(),
+      }],
+      tasks: [
+        {
+          id: 'task-1',
+          objective: 'Modify allowed-task-1.ts',
+          targetInvariantIds: ['inv-rate-ceiling'],
+          allowedFiles: ['src/allowed-task-1.ts'],
+          excludedFiles: [],
+          repairRequirements: ['req 1'],
+          acceptanceCriteria: ['acc 1'],
+        },
+        {
+          id: 'task-2',
+          objective: 'Modify allowed-task-2.ts',
+          targetInvariantIds: ['inv-rate-ceiling'],
+          allowedFiles: ['src/allowed-task-2.ts'],
+          excludedFiles: [],
+          repairRequirements: ['req 2'],
+          acceptanceCriteria: ['acc 2'],
+        },
+      ],
+      summary: 'Multi task repair',
+      createdAt: new Date().toISOString(),
+    };
+
+    // Agent will comply on task-1 but violate task-2's scope by touching task-1's file
+    const mockMultiTaskAgent = {
+      id: 'multi-task-agent',
+      name: 'Agent',
+      detect: async () => ({ available: true, version: '1' }),
+      executeTask: async (workspace: any, task: any) => {
+        const fs = require('fs');
+        const path = require('path');
+        if (task.id === 'task-1') {
+          // Allowed
+          fs.mkdirSync(path.join(workspace.worktreePath, 'src'), { recursive: true });
+          fs.writeFileSync(path.join(workspace.worktreePath, 'src/allowed-task-1.ts'), 'export const t1 = true;');
+        } else if (task.id === 'task-2') {
+          // Violation: task-2 modifies task-1's file!
+          fs.writeFileSync(path.join(workspace.worktreePath, 'src/allowed-task-1.ts'), 'export const t1 = false;'); // tampered
+        }
+        return {
+          executionId: 'exec',
+          taskId: task.id,
+          status: 'completed',
+          changedFiles: [],
+          commandsExecuted: [],
+          logs: [],
+          agentSummary: 'done',
+          durationMs: 1,
+        };
+      },
+      cancel: async () => {},
+    };
+
+    const gateway = new CodingAgentGateway([mockMultiTaskAgent as any]);
+    const repairLoopUseCase = new ExecuteRepairLoopUseCase(gateway);
+
+    const repairResult = await repairLoopUseCase.execute({
+      contract: rateLimitContract,
+      implementationPlan: dummyPlan,
+      verificationPlan: dummyVPlan,
+      initialVerificationRun: failedRun,
+      context: ctx,
+      repairPlan: multiTaskRepairPlan,
+      maxAttempts: 1,
+      cleanupWorktreeOnFinish: true,
+    });
+
+    expect(repairResult.attempts[0]?.policyPassed).toBe(false);
+    expect(repairResult.attempts[0]?.policyViolationReason).toContain('Task task-2 violated policy');
+    expect(repairResult.attempts[0]?.policyViolationReason).toContain('Attempt modified file outside allowed scope');
+  });
 });

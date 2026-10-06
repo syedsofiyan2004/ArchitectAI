@@ -15,6 +15,7 @@ export const FailureClassificationSchema = z.enum([
   'VERIFICATION_INTERFACE_MISSING',
   'VERIFIER_FAILURE',
   'ENVIRONMENT_LIMITATION',
+  'DIAGNOSIS_UNAVAILABLE',
 ]);
 export type FailureClassification = z.infer<typeof FailureClassificationSchema>;
 

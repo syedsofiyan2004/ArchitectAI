@@ -16,7 +16,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export type VulnerableAgentBehavior = 'vulnerable' | 'repeat_fail' | 'tamper_tests' | 'unrelated_files';
+export type VulnerableAgentBehavior = 'vulnerable' | 'repeat_fail' | 'tamper_tests' | 'unrelated_files' | 'break_native_checks';
 
 /**
  * VulnerableCodingAgentAdapter generates plausible implementations that satisfy
@@ -72,6 +72,12 @@ export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
         fs.mkdirSync(ciDir, { recursive: true });
         fs.writeFileSync(path.join(ciDir, 'ci.yml'), '# unauthorized CI overwrite\n');
         logs.push('[VulnerableAgent] Wrote unauthorized changes to .github/workflows/ci.yml');
+      } else if (this.behavior === 'break_native_checks') {
+        const limiterPath = path.join(targetDir, 'src', 'rate-limiter.ts');
+        fs.mkdirSync(path.dirname(limiterPath), { recursive: true });
+        // Intentional syntax error or missing export to break native tests
+        fs.writeFileSync(limiterPath, `// Broken code to fail native tests\nexport const Broken = true;`);
+        logs.push('[VulnerableAgent] Deliberately broke native tests by breaking src/rate-limiter.ts');
       } else {
         await this.applyVulnerableImplementation(targetDir, task, logs);
       }
