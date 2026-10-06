@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   ImplementationTask,
+  RepairTask,
   AgentExecutionResult,
   AgentExecutionResultSchema,
 } from '@architectai/domain';
@@ -15,14 +16,22 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+export type VulnerableAgentBehavior = 'vulnerable' | 'repeat_fail' | 'tamper_tests' | 'unrelated_files';
+
 /**
  * VulnerableCodingAgentAdapter generates plausible implementations that satisfy
  * superficial native repository tests, but fail ArchitectAI's independent adversarial verification.
- * This simulates real-world coding agents that introduce subtle boundary or concurrency flaws.
+ * Also simulates anti-test-gaming attempts and repeated failures to test repair boundaries.
  */
 export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
   readonly id = 'vulnerable-agent';
   readonly name = 'Vulnerable Coding Agent (Imperfect Implementations)';
+
+  private behavior: VulnerableAgentBehavior = 'vulnerable';
+
+  setBehavior(behavior: VulnerableAgentBehavior): void {
+    this.behavior = behavior;
+  }
 
   async detect(): Promise<AgentAvailability> {
     return {
@@ -33,19 +42,39 @@ export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
 
   async executeTask(
     workspace: AgentWorkspace,
-    task: ImplementationTask
+    task: ImplementationTask | RepairTask
   ): Promise<AgentExecutionResult> {
     const executionId = `vuln-exec-${Date.now()}`;
     const targetDir = workspace.worktreePath || workspace.repositoryPath;
     const startTime = Date.now();
+    const taskTitle = 'title' in task ? task.title : task.id;
 
     const logs: string[] = [
-      `[VulnerableAgent] Received task: ${task.id} (${task.title})`,
-      `[VulnerableAgent] Generating plausible (but flawed) implementation in ${targetDir}`,
+      `[VulnerableAgent] Received task: ${task.id} (${taskTitle})`,
+      `[VulnerableAgent] Generating implementation with behavior '${this.behavior}' in ${targetDir}`,
     ];
 
     try {
-      await this.applyVulnerableImplementation(targetDir, task, logs);
+      if (this.behavior === 'tamper_tests') {
+        // Attempt to tamper with package.json test script or test assertions
+        const pkgPath = path.join(targetDir, 'package.json');
+        if (fs.existsSync(pkgPath)) {
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+          if (pkg.scripts && pkg.scripts.test) {
+            pkg.scripts.test = 'exit 0';
+            fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2));
+            logs.push('[VulnerableAgent] Tampered with package.json test script (set to exit 0)');
+          }
+        }
+      } else if (this.behavior === 'unrelated_files') {
+        // Attempt to write into protected CI directory
+        const ciDir = path.join(targetDir, '.github', 'workflows');
+        fs.mkdirSync(ciDir, { recursive: true });
+        fs.writeFileSync(path.join(ciDir, 'ci.yml'), '# unauthorized CI overwrite\n');
+        logs.push('[VulnerableAgent] Wrote unauthorized changes to .github/workflows/ci.yml');
+      } else {
+        await this.applyVulnerableImplementation(targetDir, task, logs);
+      }
 
       const changedFiles = await this.getChangedFiles(targetDir);
       const durationMs = Date.now() - startTime;
@@ -58,7 +87,7 @@ export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
         changedFiles,
         commandsExecuted: [],
         logs,
-        agentSummary: `Vulnerable Agent completed task ${task.id}: implemented basic requirements for ${task.title}.`,
+        agentSummary: `Vulnerable Agent completed task ${task.id} (behavior: ${this.behavior}).`,
         durationMs,
       });
     } catch (err) {
@@ -82,10 +111,13 @@ export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
 
   private async applyVulnerableImplementation(
     targetDir: string,
-    task: ImplementationTask,
+    task: ImplementationTask | RepairTask,
     logs: string[]
   ): Promise<void> {
-    const textToMatch = `${task.title} ${task.objective} ${task.requirements.join(' ')}`.toLowerCase();
+    const taskTitle = 'title' in task ? task.title : task.id;
+    const taskReqs = 'requirements' in task ? task.requirements : task.repairRequirements;
+    const targetInvariants = 'targetInvariantIds' in task ? task.targetInvariantIds : ('sourceInvariantIds' in task ? task.sourceInvariantIds : []);
+    const textToMatch = `${taskTitle} ${task.objective} ${taskReqs.join(' ')} ${targetInvariants.join(' ')}`.toLowerCase();
 
     // VULNERABLE CONTROL A: Fixed-Window Rate Limiter (Flawed Boundary Reset)
     // Satisfies native test (has 'isAllowed' and 'window'), but resets at fixed minute!

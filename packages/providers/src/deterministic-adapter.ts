@@ -5,6 +5,7 @@ import {
   ImplementationPlanSchema,
   ImplementationTask,
   VerificationIntentSchema,
+  FailureDiagnosisSchema,
   WellKnownDimensions,
 } from '@architectai/domain';
 import {
@@ -1018,6 +1019,88 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
         data: validated as T,
       };
     }
+
+    if (request.schemaName === 'FailureDiagnosis') {
+      const userMessage = request.messages.find((m) => m.role === 'user')?.content || '';
+      const invMatch = userMessage.match(/Failed Invariant:\s*- ID:\s*([^\r\n]+)/i);
+      const invariantId = invMatch ? invMatch[1]!.trim() : 'inv-unknown';
+      const caseMatch = userMessage.match(/Failed Verification Case:\s*- Case ID:\s*([^\r\n]+)/i);
+      const caseId = caseMatch ? caseMatch[1]!.trim() : 'case-unknown';
+
+      // Extract evidence IDs from user message
+      const evidenceIdMatches = Array.from(
+        userMessage.matchAll(/- ID:\s*(ev-[a-zA-Z0-9_-]+)/g)
+      ).map((m) => m[1]!);
+
+      // Check if prompt specifically indicates an architectural decision invalidation
+      const isArchConflict =
+        userMessage.includes('ARCHITECTURE_DECISION_INVALID') ||
+        userMessage.includes('physical motherboard') ||
+        userMessage.includes('conflict with repository architecture');
+
+      let classification: import('@architectai/domain').FailureClassification = 'IMPLEMENTATION_DEFECT';
+      let likelyFailureMechanism = `Implementation did not enforce property for invariant ${invariantId}.`;
+      let affectedFiles: string[] = ['src/'];
+      let isRepairable = true;
+      let requiresArchReview = false;
+      let reconsiderationRationale: string | undefined;
+
+      if (isArchConflict) {
+        classification = 'ARCHITECTURE_DECISION_INVALID';
+        isRepairable = false;
+        requiresArchReview = true;
+        reconsiderationRationale =
+          'The target engineering invariant fundamentally conflicts with accepted architectural decisions and physical environment limits.';
+        likelyFailureMechanism =
+          'Architectural assumption violated: requirement cannot be satisfied within existing decision boundaries.';
+      } else if (invariantId.includes('rate')) {
+        likelyFailureMechanism =
+          'Fixed-window counter resets allowance at discrete minute boundaries, allowing up to 2x burst across window boundaries. Needs sliding-window rolling enforcement.';
+        affectedFiles = ['src/rate-limiter.ts'];
+      } else if (invariantId.includes('payment') || invariantId.includes('idempot')) {
+        likelyFailureMechanism =
+          'Payment charge handler executes downstream charge without checking or locking idempotency ledger, allowing duplicate side effects on retries.';
+        affectedFiles = ['src/idempotency.ts', 'src/payment.ts'];
+      } else if (invariantId.includes('worker') || invariantId.includes('concurrency')) {
+        likelyFailureMechanism =
+          'Worker pool executes submitted tasks immediately without active task throttling or queueing, exceeding peak concurrency ceiling.';
+        affectedFiles = ['src/worker-pool.ts'];
+      } else if (invariantId.includes('token') || invariantId.includes('single-flight')) {
+        likelyFailureMechanism =
+          'Token manager executes upstream exchange separately for each concurrent caller instead of sharing a single in-flight Promise.';
+        affectedFiles = ['src/token-manager.ts'];
+      }
+
+      resultData = {
+        id: `diag-${Date.now()}-${caseId}`,
+        verificationCaseId: caseId,
+        targetInvariantId: invariantId,
+        sourceConcernIds: [],
+        sourceDecisionIds: [],
+        classification,
+        expectedBehavior: 'Satisfy invariant threshold under adversarial stimulus',
+        observedBehavior: 'Adversarial violation observed in measured execution evidence',
+        assertionFailureMessages: ['Verification assertion failed against measured evidence'],
+        evidenceReferences: evidenceIdMatches,
+        likelyFailureMechanism,
+        likelyAffectedFiles: affectedFiles,
+        likelyAffectedSymbols: [],
+        confidence: 0.9,
+        assumptions: ['Verification evidence correctly reflects target implementation behavior'],
+        unresolvedQuestions: [],
+        isRepairable,
+        requiresArchitectureReview: requiresArchReview,
+        reconsiderationRationale,
+        createdAt: new Date().toISOString(),
+      };
+
+      const validated = FailureDiagnosisSchema.parse(resultData);
+      return {
+        content: JSON.stringify(validated),
+        data: validated as T,
+      };
+    }
+
 
 
     // Generic fallback for any other schema

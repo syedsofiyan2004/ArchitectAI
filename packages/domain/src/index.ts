@@ -10,3 +10,4 @@ export * from './evals.js';
 export * from './reasoning.js';
 export * from './workspace.js';
 export * from './execution.js';
+export * from './repair.js';

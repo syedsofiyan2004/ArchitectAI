@@ -164,5 +164,31 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     const json = await res.json();
     expect(json.error).toContain('ImplementationPlan is required');
   });
+
+  it('POST /api/repair/execute rejects execution without explicit approval with 403', async () => {
+    const res = await fetch(`${baseUrl}/api/repair/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        approved: false,
+      }),
+    });
+
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.error).toContain('Explicit user approval is strictly required');
+  });
+
+  it('POST /api/repair/diagnose rejects missing parameters with 400', async () => {
+    const res = await fetch(`${baseUrl}/api/repair/diagnose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBeDefined();
+  });
 });
 

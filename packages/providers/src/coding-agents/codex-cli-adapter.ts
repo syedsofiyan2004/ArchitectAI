@@ -2,6 +2,7 @@ import { execFile, ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   ImplementationTask,
+  RepairTask,
   AgentExecutionResult,
   AgentExecutionResultSchema,
 } from '@architectai/domain';
@@ -37,18 +38,19 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
 
   async executeTask(
     workspace: AgentWorkspace,
-    task: ImplementationTask
+    task: ImplementationTask | RepairTask
   ): Promise<AgentExecutionResult> {
     const executionId = `exec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const targetDir = workspace.worktreePath || workspace.repositoryPath;
     const startTime = Date.now();
+    const taskTitle = 'title' in task ? task.title : task.id;
 
     // Construct bounded prompt strictly adhering to task discipline
     const prompt = this.buildBoundedTaskPrompt(task);
 
     const logs: string[] = [
       `[ArchitectAI Gateway] Starting execution ${executionId} on worktree: ${targetDir}`,
-      `[ArchitectAI Gateway] Task: ${task.id} — ${task.title}`,
+      `[ArchitectAI Gateway] Task: ${task.id} — ${taskTitle}`,
       `[ArchitectAI Gateway] Allowed files: ${task.allowedFiles.join(', ') || 'Any non-excluded'}`,
     ];
 
@@ -149,22 +151,32 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
     }
   }
 
-  private buildBoundedTaskPrompt(task: ImplementationTask): string {
+  private buildBoundedTaskPrompt(task: ImplementationTask | RepairTask): string {
+    const isRepair = 'targetInvariantIds' in task;
+    const requirements = isRepair ? task.repairRequirements : task.requirements;
+    const sourceInvariants = isRepair ? task.targetInvariantIds : task.sourceInvariantIds;
+    const sourceConcerns = isRepair ? [] : task.sourceConcernIds;
+    const sourceDecisions = isRepair ? [] : task.sourceDecisionIds;
+    const evidenceSummary = isRepair && task.evidenceReferences.length > 0
+      ? [`- Measured Evidence References: ${task.evidenceReferences.join(', ')}`]
+      : [];
+
     return [
-      `# ArchitectAI Bounded Implementation Task: ${task.id}`,
+      `# ArchitectAI Bounded ${isRepair ? 'Repair' : 'Implementation'} Task: ${task.id}`,
       `Objective: ${task.objective}`,
       '',
       '## Architectural Traceability',
-      `- Source Concerns: ${task.sourceConcernIds.join(', ') || 'N/A'}`,
-      `- Source Decisions: ${task.sourceDecisionIds.join(', ') || 'N/A'}`,
-      `- Source Invariants: ${task.sourceInvariantIds.join(', ') || 'N/A'}`,
+      ...(sourceConcerns.length > 0 ? [`- Source Concerns: ${sourceConcerns.join(', ')}`] : []),
+      ...(sourceDecisions.length > 0 ? [`- Source Decisions: ${sourceDecisions.join(', ')}`] : []),
+      `- Target Invariants: ${sourceInvariants.join(', ') || 'N/A'}`,
+      ...evidenceSummary,
       '',
       '## Scope Boundaries',
       `- Files Allowed to Modify: ${task.allowedFiles.join(', ') || 'None specified (stay bounded)'}`,
       `- Files EXCLUDED from Modification: ${task.excludedFiles.join(', ') || 'Do not modify unrelated code or package lockfiles without permission'}`,
       '',
       '## Requirements',
-      ...task.requirements.map((r, i) => `${i + 1}. ${r}`),
+      ...requirements.map((r, i) => `${i + 1}. ${r}`),
       '',
       '## Acceptance Criteria',
       ...task.acceptanceCriteria.map((a) => `- [ ] ${a}`),
@@ -172,7 +184,7 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
       '## Operational Instructions',
       '1. Implement ONLY what is requested in this bounded task.',
       '2. Do NOT redesign the architecture or change public API contracts outside scope.',
-      '3. Ensure existing tests pass and add unit tests for new behavior if appropriate.',
+      '3. Ensure existing tests pass and do NOT tamper with test files or verification configs.',
     ].join('\n');
   }
 

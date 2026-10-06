@@ -4,6 +4,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import {
   ImplementationTask,
+  RepairTask,
   AgentExecutionResult,
   AgentExecutionResultSchema,
 } from '@architectai/domain';
@@ -28,16 +29,18 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
 
   async executeTask(
     workspace: AgentWorkspace,
-    task: ImplementationTask
+    task: ImplementationTask | RepairTask
   ): Promise<AgentExecutionResult> {
     const executionId = `mock-exec-${Date.now()}`;
     const targetDir = workspace.worktreePath || workspace.repositoryPath;
     const startTime = Date.now();
+    const taskTitle = 'title' in task ? task.title : task.id;
+    const taskReqs = 'requirements' in task ? task.requirements : task.repairRequirements;
 
     const logs: string[] = [
-      `[DeterministicAgent] Received task: ${task.id} (${task.title})`,
+      `[DeterministicAgent] Received task: ${task.id} (${taskTitle})`,
       `[DeterministicAgent] Target worktree directory: ${targetDir}`,
-      `[DeterministicAgent] Analyzing requirements: ${task.requirements.join('; ')}`,
+      `[DeterministicAgent] Analyzing requirements: ${taskReqs.join('; ')}`,
     ];
 
     try {
@@ -57,7 +60,7 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
         changedFiles,
         commandsExecuted: [],
         logs,
-        agentSummary: `Deterministic Agent completed task ${task.id}: implemented requirements for ${task.title}.`,
+        agentSummary: `Deterministic Agent completed task ${task.id}: implemented requirements for ${taskTitle}.`,
         durationMs,
       });
     } catch (err) {
@@ -85,10 +88,13 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
 
   private async applyImplementation(
     targetDir: string,
-    task: ImplementationTask,
+    task: ImplementationTask | RepairTask,
     logs: string[]
   ): Promise<void> {
-    const textToMatch = `${task.title} ${task.objective} ${task.requirements.join(' ')}`.toLowerCase();
+    const taskTitle = 'title' in task ? task.title : task.id;
+    const taskReqs = 'requirements' in task ? task.requirements : task.repairRequirements;
+    const targetInvariants = 'targetInvariantIds' in task ? task.targetInvariantIds : ('sourceInvariantIds' in task ? task.sourceInvariantIds : []);
+    const textToMatch = `${taskTitle} ${task.objective} ${taskReqs.join(' ')} ${targetInvariants.join(' ')}`.toLowerCase();
 
     // Target Scenario A: Rate Limiting
     if (textToMatch.includes('rate limit') || textToMatch.includes('burst') || textToMatch.includes('window')) {

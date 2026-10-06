@@ -9,3 +9,8 @@ export * from './services/git-workspace.service.js';
 export * from './services/repository-context-builder.js';
 export * from './services/git-isolation.service.js';
 export * from './services/execution-checks.service.js';
+export * from './services/repair-policy-validator.js';
+export * from './services/repair-session.service.js';
+export * from './use-cases/diagnose-failure.use-case.js';
+export * from './use-cases/compile-repair-plan.use-case.js';
+export * from './use-cases/execute-repair-loop.use-case.js';

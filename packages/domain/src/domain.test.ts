@@ -306,6 +306,93 @@ describe('Domain Schemas', () => {
     const parsedArtifact = NodeVerificationArtifactSchema.parse(artifact);
     expect(parsedArtifact.targetFile).toBe('src/rate-limiter.ts');
   });
+
+  it('validates FailureDiagnosis, RepairPlan, and RepairRunResult schemas', async () => {
+    const {
+      FailureDiagnosisSchema,
+      RepairPlanSchema,
+      RepairRunResultSchema,
+    } = await import('./repair.js');
+
+    const diagnosis = {
+      id: 'diag-01',
+      verificationCaseId: 'case-burst',
+      targetInvariantId: 'inv-rate-ceiling',
+      targetSpecId: 'spec-burst',
+      sourceConcernIds: ['concern-burst'],
+      sourceDecisionIds: ['decision-sliding'],
+      classification: 'IMPLEMENTATION_DEFECT' as const,
+      expectedBehavior: 'Accepted requests across boundary <= 5',
+      observedBehavior: 'Observed 10 accepted requests across boundary',
+      expectedMetricValue: 5,
+      observedMetricValue: 10,
+      assertionFailureMessages: ['Accepted requests across boundary exceeded limit (10 > 5)'],
+      evidenceReferences: ['ev-burst-01'],
+      likelyFailureMechanism: 'Fixed window reset resets bucket at minute boundary allowing 2x quota',
+      likelyAffectedFiles: ['src/rate-limiter.ts'],
+      likelyAffectedSymbols: ['FixedWindowRateLimiter'],
+      confidence: 0.95,
+      assumptions: ['Clients can burst requests'],
+      unresolvedQuestions: [],
+      isRepairable: true,
+      requiresArchitectureReview: false,
+      createdAt: new Date().toISOString(),
+    };
+
+    const parsedDiagnosis = FailureDiagnosisSchema.parse(diagnosis);
+    expect(parsedDiagnosis.classification).toBe('IMPLEMENTATION_DEFECT');
+    expect(parsedDiagnosis.isRepairable).toBe(true);
+
+    const repairPlan = {
+      id: 'repair-plan-01',
+      contractId: 'contract-m3-ratelimit',
+      repositoryPath: '/mock/repo',
+      diagnoses: [parsedDiagnosis],
+      tasks: [
+        {
+          id: 'REPAIR-TASK-001',
+          objective: 'Replace fixed-window counter with rolling-window rate limiter preserving boundary ceiling',
+          targetInvariantIds: ['inv-rate-ceiling'],
+          targetVerificationCaseIds: ['case-burst'],
+          evidenceReferences: ['ev-burst-01'],
+          likelyFiles: ['src/rate-limiter.ts'],
+          allowedFiles: ['src/rate-limiter.ts'],
+          excludedFiles: ['test/**', '.github/**'],
+          repairRequirements: ['Smooth boundary resets using sliding timestamp log or sliding window counter'],
+          acceptanceCriteria: ['Passes rolling 60s window invariant under boundary burst stimulus'],
+          dependencies: [],
+          riskLevel: 'medium' as const,
+          maxScope: 'Modify rate limiter mechanism only',
+          status: 'pending' as const,
+        },
+      ],
+      summary: 'Repair plan targeting boundary burst defect',
+      createdAt: new Date().toISOString(),
+    };
+
+    const parsedRepairPlan = RepairPlanSchema.parse(repairPlan);
+    expect(parsedRepairPlan.tasks).toHaveLength(1);
+    expect(parsedRepairPlan.tasks[0].targetInvariantIds).toContain('inv-rate-ceiling');
+
+    const repairRunResult = {
+      repairPlanId: parsedRepairPlan.id,
+      contractId: 'contract-m3-ratelimit',
+      outcome: 'REPAIRED' as const,
+      attempts: [],
+      totalAttempts: 1,
+      maxAttempts: 3,
+      isRepaired: true,
+      repairedInvariants: ['inv-rate-ceiling'],
+      unresolvedInvariants: [],
+      durationMs: 450,
+      completedAt: new Date().toISOString(),
+    };
+
+    const parsedRunResult = RepairRunResultSchema.parse(repairRunResult);
+    expect(parsedRunResult.outcome).toBe('REPAIRED');
+    expect(parsedRunResult.isRepaired).toBe(true);
+  });
 });
+
 
 

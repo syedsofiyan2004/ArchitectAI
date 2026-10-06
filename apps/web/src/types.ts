@@ -9,7 +9,18 @@ import {
   AgentExecutionResult,
   VerificationPlan,
   VerificationRunResult,
+  FailureDiagnosis,
+  RepairPlan,
+  RepairAttempt,
+  RepairRunResult,
 } from '@architectai/domain';
+
+export type {
+  FailureDiagnosis,
+  RepairPlan,
+  RepairAttempt,
+  RepairRunResult,
+};
 
 export interface AgentInfo {
   id: string;

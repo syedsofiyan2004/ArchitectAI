@@ -8,10 +8,14 @@ import {
   VerificationRunResult,
 } from '@architectai/domain';
 import { CodingAgentGateway } from '@architectai/providers';
-import { GitIsolationService, GitDiffReport } from '../services/git-isolation.service.js';
+import { GitIsolationService, GitDiffReport, IsolatedWorktreeSession } from '../services/git-isolation.service.js';
 import { ExecutionChecksService, ExecutionCheckResult } from '../services/execution-checks.service.js';
 import { CompileVerificationPlanUseCase } from './compile-verification-plan.use-case.js';
 import { VerifyImplementationUseCase } from './verify-implementation.use-case.js';
+
+export interface PlanExecutionOptions {
+  preserveWorktreeOnFailure?: boolean;
+}
 
 export interface PlanExecutionOutput {
   plan: ImplementationPlan;
@@ -30,6 +34,7 @@ export interface PlanExecutionOutput {
   diffReport: GitDiffReport;
   allTasksCompleted: boolean;
   isVerified: boolean;
+  worktreeSession?: IsolatedWorktreeSession;
   executedAt: string;
 }
 
@@ -46,7 +51,8 @@ export class ExecuteImplementationPlanUseCase {
     plan: ImplementationPlan,
     requestedAgentId?: string,
     contract?: EngineeringContract,
-    context?: RepositoryContext
+    context?: RepositoryContext,
+    options?: PlanExecutionOptions
   ): Promise<PlanExecutionOutput> {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
@@ -148,11 +154,17 @@ export class ExecuteImplementationPlanUseCase {
         worktreeSession.originalHead
       );
 
-      // Step 6: Clean up worktree directory
-      await this.gitIsolation.cleanupWorktree(
-        plan.repositoryPath,
-        worktreeSession.worktreePath
+      const shouldPreserve = Boolean(
+        options?.preserveWorktreeOnFailure && verificationRun && !verificationRun.isVerified
       );
+
+      if (!shouldPreserve) {
+        // Step 6: Clean up worktree directory
+        await this.gitIsolation.cleanupWorktree(
+          plan.repositoryPath,
+          worktreeSession.worktreePath
+        );
+      }
 
       // Step 7: Verify original branch and HEAD are untouched
       const verification = await this.gitIsolation.verifyOriginalBranchUntouched(
@@ -181,6 +193,7 @@ export class ExecuteImplementationPlanUseCase {
         diffReport,
         allTasksCompleted,
         isVerified,
+        worktreeSession: shouldPreserve ? worktreeSession : undefined,
         executedAt: new Date().toISOString(),
       };
     } catch (err) {

@@ -65,7 +65,7 @@ export interface CodingAgentAdapter {
   detect(): Promise<AgentAvailability>;
   executeTask(
     workspace: AgentWorkspace,
-    task: import('@architectai/domain').ImplementationTask
+    task: import('@architectai/domain').ImplementationTask | import('@architectai/domain').RepairTask
   ): Promise<import('@architectai/domain').AgentExecutionResult>;
   cancel(executionId: string): Promise<void>;
 }

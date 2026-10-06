@@ -16,11 +16,18 @@ import {
   RotateCcw,
   ShieldCheck,
   ShieldAlert,
-  ShieldX,
   HelpCircle,
   Code,
+  Wrench,
 } from 'lucide-react';
-import { AnalysisRunRecord, AgentInfo, PlanExecutionOutput } from '../types';
+import {
+  AnalysisRunRecord,
+  AgentInfo,
+  PlanExecutionOutput,
+  FailureDiagnosis,
+  RepairPlan,
+  RepairRunResult,
+} from '../types';
 import { ImplementationPlan, RepositoryWorkspace, ImplementationTask } from '@architectai/domain';
 import { useRuns } from '../store/runs';
 
@@ -49,6 +56,15 @@ export const ImplementationPage: React.FC = () => {
   const [executionOutput, setExecutionOutput] = useState<PlanExecutionOutput | null>(run.execution || null);
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Milestone 4 Repair Loop states
+  const [isDiagnosing, setIsDiagnosing] = useState<boolean>(false);
+  const [diagnoses, setDiagnoses] = useState<FailureDiagnosis[] | null>(null);
+  const [repairPlan, setRepairPlan] = useState<RepairPlan | null>(null);
+  const [repairApproved, setRepairApproved] = useState<boolean>(false);
+  const [isRepairing, setIsRepairing] = useState<boolean>(false);
+  const [repairResult, setRepairResult] = useState<RepairRunResult | null>(null);
+  const [repairStatusMsg, setRepairStatusMsg] = useState<string>('');
 
   // Load available coding agents
   useEffect(() => {
@@ -133,6 +149,87 @@ export const ImplementationPage: React.FC = () => {
       setError(err instanceof Error ? err.message : 'Execution failed.');
     } finally {
       setIsExecuting(false);
+    }
+  };
+
+  const handleDiagnose = async () => {
+    if (!executionOutput?.verificationRun || !executionOutput.verificationPlan || !plan) return;
+    setIsDiagnosing(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/repair/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contract,
+          plan,
+          context: run.context,
+          verificationPlan: executionOutput.verificationPlan,
+          verificationRun: executionOutput.verificationRun,
+          diffReport: executionOutput.diffReport,
+          runId: executionOutput.runId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to diagnose verification failure.');
+      }
+      setDiagnoses(data.diagnoses);
+      setRepairPlan(data.repairPlan);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Diagnosis failed.');
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
+
+  const handleExecuteRepair = async () => {
+    if (!repairPlan || !executionOutput?.verificationRun || !executionOutput.verificationPlan || !plan) return;
+    setIsRepairing(true);
+    setError(null);
+    setRepairStatusMsg('Repair attempt 1 of 3: Coding agent modifying implementation in worktree...');
+
+    try {
+      const res = await fetch('/api/repair/execute', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contract,
+          plan,
+          context: run.context,
+          verificationPlan: executionOutput.verificationPlan,
+          verificationRun: executionOutput.verificationRun,
+          diagnoses,
+          repairPlan,
+          maxAttempts: 3,
+          agentId: selectedAgentId,
+          runId: executionOutput.runId,
+          approved: true,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Repair execution failed.');
+      }
+
+      setRepairResult(data.repairResult);
+      if (data.repairResult.finalVerificationResult) {
+        setExecutionOutput((prev) =>
+          prev
+            ? {
+                ...prev,
+                verificationRun: data.repairResult.finalVerificationResult,
+                isVerified: data.repairResult.isRepaired,
+              }
+            : null
+        );
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Repair loop failed.');
+    } finally {
+      setIsRepairing(false);
+      setRepairStatusMsg('');
     }
   };
 
@@ -536,6 +633,174 @@ export const ImplementationPage: React.FC = () => {
                   </div>
                 ))}
               </div>
+
+              {/* Milestone 4: Evidence-Driven Autonomous Diagnosis & Repair Section */}
+              {executionOutput.verificationRun &&
+                executionOutput.verificationRun.overallStatus === 'FAILED' && (
+                  <div className="repair-lifecycle-container">
+                    <div className="repair-card-header">
+                      <Wrench size={18} className="icon-warning" />
+                      <div>
+                        <h4>Evidence-Driven Autonomous Diagnosis & Repair</h4>
+                        <p className="text-secondary text-sm">
+                          Independent verification failed on measured software evidence. ArchitectAI can diagnose the root-cause failure mechanism and execute a bounded repair loop without modifying tests or CI.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Action: Diagnose & Prepare Repair */}
+                    {!diagnoses && !repairResult && (
+                      <div className="repair-action-bar">
+                        <button
+                          type="button"
+                          className="btn-diagnose font-mono"
+                          onClick={handleDiagnose}
+                          disabled={isDiagnosing}
+                        >
+                          {isDiagnosing ? (
+                            <>
+                              <span className="spinner-white" aria-hidden="true"></span>
+                              <span>Grounding Measured Evidence & Diagnosing...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Wrench size={15} />
+                              <span>Diagnose & Prepare Repair</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Display Failure Diagnosis & Proposed Bounded Repair */}
+                    {diagnoses && diagnoses.length > 0 && !repairResult && (
+                      <div className="diagnosis-results-box">
+                        <div className="diagnosis-classification-pill font-mono">
+                          <span>CLASSIFICATION: {diagnoses[0]?.classification}</span>
+                          {diagnoses[0]?.isRepairable ? (
+                            <span className="badge-pass">REPAIR ELIGIBLE</span>
+                          ) : (
+                            <span className="badge-fail">HUMAN REVIEW REQUIRED</span>
+                          )}
+                        </div>
+
+                        <p className="diagnosis-mechanism">
+                          <strong>Root Cause Mechanism:</strong> {diagnoses[0]?.likelyFailureMechanism}
+                        </p>
+
+                        {diagnoses[0]?.expectedMetricValue !== undefined && (
+                          <div className="diagnosis-evidence-metrics font-mono">
+                            <span>Expected: {String(diagnoses[0]?.expectedMetricValue)}</span>
+                            <span className="text-danger font-bold">
+                              Observed: {String(diagnoses[0]?.observedMetricValue)}
+                            </span>
+                          </div>
+                        )}
+
+                        {repairPlan && repairPlan.tasks.length > 0 && (
+                          <div className="repair-proposal-box">
+                            <span className="box-label font-mono">PROPOSED BOUNDED REPAIR</span>
+                            <p className="repair-objective">{repairPlan.tasks[0]?.objective}</p>
+                            <div className="repair-files font-mono">
+                              <span>Allowed Files: {repairPlan.tasks[0]?.allowedFiles.join(', ')}</span>
+                            </div>
+
+                            {/* User Approval Gate for Repair */}
+                            <div className="repair-approval-row">
+                              <label className="approval-checkbox-control">
+                                <input
+                                  type="checkbox"
+                                  checked={repairApproved}
+                                  onChange={(e) => setRepairApproved(e.target.checked)}
+                                />
+                                <span>I approve running autonomous repair loop (up to 3 bounded attempts in isolated worktree)</span>
+                              </label>
+
+                              <button
+                                type="button"
+                                className="btn-approve-repair font-mono"
+                                onClick={handleExecuteRepair}
+                                disabled={!repairApproved || isRepairing}
+                              >
+                                {isRepairing ? (
+                                  <>
+                                    <span className="spinner-white" aria-hidden="true"></span>
+                                    <span>{repairStatusMsg || 'Executing Repair in Isolated Worktree...'}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Play size={14} />
+                                    <span>Approve & Execute Repair</span>
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Display Repair Outcome & Attempt History */}
+                    {repairResult && (
+                      <div className="repair-outcome-container">
+                        <div className={`repair-outcome-banner ${repairResult.outcome.toLowerCase()}`}>
+                          {repairResult.isRepaired ? (
+                            <>
+                              <CheckCircle2 size={18} className="icon-success" />
+                              <div>
+                                <strong>ARCHITECTAI VERIFIED</strong>
+                                <p className="text-sm">
+                                  Successfully repaired and re-verified in {repairResult.totalAttempts} attempt(s).
+                                </p>
+                              </div>
+                            </>
+                          ) : repairResult.outcome === 'ARCHITECTURE_REVIEW_REQUIRED' ? (
+                            <>
+                              <AlertTriangle size={18} className="icon-warning" />
+                              <div>
+                                <strong>ARCHITECTURE REVIEW REQUIRED</strong>
+                                <p className="text-sm">
+                                  {repairResult.escalationReason ||
+                                    'Verification failure indicates an architectural decision must be revised.'}
+                                </p>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <XCircle size={18} className="icon-danger" />
+                              <div>
+                                <strong>NEEDS HUMAN REVIEW</strong>
+                                <p className="text-sm">
+                                  {repairResult.escalationReason ||
+                                    'Maximum repair attempts reached without satisfying all invariants.'}
+                                </p>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Repair Attempt History */}
+                        <div className="repair-attempts-timeline">
+                          <span className="font-mono text-muted text-xs">
+                            Repair Attempt History ({repairResult.attempts.length}):
+                          </span>
+                          {repairResult.attempts.map((att) => (
+                            <div key={att.attemptNumber} className={`attempt-item-card ${att.progress.toLowerCase()}`}>
+                              <div className="attempt-header-row font-mono">
+                                <span>Attempt #{att.attemptNumber}</span>
+                                <span className={`progress-badge ${att.progress.toLowerCase()}`}>{att.progress}</span>
+                                <span>{att.durationMs}ms</span>
+                              </div>
+                              <div className="attempt-diff-summary font-mono text-xs">
+                                {att.diffSummary}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
             </div>
           )}
 

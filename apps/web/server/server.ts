@@ -18,11 +18,17 @@ import {
   RepositoryContextBuilder,
   CompileImplementationPlanUseCase,
   ExecuteImplementationPlanUseCase,
+  DiagnoseVerificationFailureUseCase,
+  CompileRepairPlanUseCase,
+  ExecuteRepairLoopUseCase,
+  IsolatedWorktreeSession,
   NonGitRepositoryError,
 } from '@architectai/application';
 import {
   EngineeringContractSchema,
   ImplementationPlanSchema,
+  VerificationPlanSchema,
+  VerificationRunResultSchema,
 } from '@architectai/domain';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -57,6 +63,10 @@ export async function createServer() {
   const contextBuilder = new RepositoryContextBuilder();
   const taskCompiler = new CompileImplementationPlanUseCase(provider);
   const planExecutor = new ExecuteImplementationPlanUseCase(agentGateway);
+  const failureDiagnoser = new DiagnoseVerificationFailureUseCase(provider);
+  const repairPlanCompiler = new CompileRepairPlanUseCase();
+  const repairLoopUseCase = new ExecuteRepairLoopUseCase(agentGateway);
+  const activeWorktreeSessions = new Map<string, IsolatedWorktreeSession>();
 
   // API Config
   app.get('/api/config', (_req: Request, res: Response) => {
@@ -308,8 +318,13 @@ export async function createServer() {
         validatedPlan,
         agentId,
         validatedContract,
-        context
+        context,
+        { preserveWorktreeOnFailure: true }
       );
+
+      if (output.worktreeSession) {
+        activeWorktreeSessions.set(output.runId, output.worktreeSession);
+      }
 
       return res.json({
         success: true,
@@ -319,6 +334,149 @@ export async function createServer() {
       return res.status(500).json({
         success: false,
         error: err instanceof Error ? err.message : 'Execution failed.',
+      });
+    }
+  });
+
+  // Diagnose verification failure and compile bounded repair plan
+  app.post('/api/repair/diagnose', async (req: Request, res: Response) => {
+    try {
+      const { contract, plan, context, verificationPlan, verificationRun, diffReport, runId } = req.body;
+      if (!contract || !plan || !verificationRun) {
+        return res.status(400).json({ error: 'Contract, plan, and verificationRun are required.' });
+      }
+
+      const validatedContract = EngineeringContractSchema.parse(contract);
+      const validatedPlan = ImplementationPlanSchema.parse(plan);
+      const validatedVPlan = VerificationPlanSchema.parse(verificationPlan);
+      const validatedVRun = VerificationRunResultSchema.parse(verificationRun);
+
+      const diagnoses = await failureDiagnoser.execute({
+        contract: validatedContract,
+        implementationPlan: validatedPlan,
+        repositoryContext: context || {
+          repositoryPath: validatedPlan.repositoryPath,
+          relevantFiles: [],
+          relevantDirectories: [],
+          relevantManifests: [],
+          probableEntryPoints: [],
+          existingTests: [],
+          implementationObservations: [],
+          unresolvedQuestions: [],
+        },
+        verificationPlan: validatedVPlan,
+        verificationRun: validatedVRun,
+        diffReport,
+      });
+
+      let repairPlan = undefined;
+      const repairableDiagnoses = diagnoses.filter(
+        (d) => d.isRepairable && !d.requiresArchitectureReview
+      );
+      if (repairableDiagnoses.length > 0) {
+        repairPlan = await repairPlanCompiler.execute({
+          diagnoses: repairableDiagnoses,
+          contract: validatedContract,
+          context: context || {
+            repositoryPath: validatedPlan.repositoryPath,
+            relevantFiles: [],
+            relevantDirectories: [],
+            relevantManifests: [],
+            probableEntryPoints: [],
+            existingTests: [],
+            implementationObservations: [],
+            unresolvedQuestions: [],
+          },
+          implementationPlan: validatedPlan,
+          diffReport,
+        });
+      }
+
+      return res.json({
+        success: true,
+        runId,
+        diagnoses,
+        repairPlan,
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Failed to diagnose verification failure.',
+      });
+    }
+  });
+
+  // Execute Repair Loop (requires explicit user approval)
+  app.post('/api/repair/execute', async (req: Request, res: Response) => {
+    try {
+      const {
+        contract,
+        plan,
+        context,
+        verificationPlan,
+        verificationRun,
+        diagnoses,
+        repairPlan,
+        maxAttempts,
+        agentId,
+        runId,
+        approved,
+      } = req.body;
+
+      if (!approved) {
+        return res.status(403).json({
+          success: false,
+          error:
+            'Execution rejected: Explicit user approval is strictly required before starting autonomous repair.',
+        });
+      }
+
+      if (!contract || !plan || !verificationRun) {
+        return res.status(400).json({ error: 'Contract, plan, and verificationRun are required.' });
+      }
+
+      const validatedContract = EngineeringContractSchema.parse(contract);
+      const validatedPlan = ImplementationPlanSchema.parse(plan);
+      const validatedVPlan = VerificationPlanSchema.parse(verificationPlan);
+      const validatedVRun = VerificationRunResultSchema.parse(verificationRun);
+
+      const worktreeSession = runId ? activeWorktreeSessions.get(runId) : undefined;
+
+      const repairResult = await repairLoopUseCase.execute({
+        contract: validatedContract,
+        implementationPlan: validatedPlan,
+        verificationPlan: validatedVPlan,
+        initialVerificationRun: validatedVRun,
+        context: context || {
+          repositoryPath: validatedPlan.repositoryPath,
+          relevantFiles: [],
+          relevantDirectories: [],
+          relevantManifests: [],
+          probableEntryPoints: [],
+          existingTests: [],
+          implementationObservations: [],
+          unresolvedQuestions: [],
+        },
+        worktreeSession,
+        diagnoses,
+        repairPlan,
+        maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : 3,
+        agentId,
+        cleanupWorktreeOnFinish: true,
+      });
+
+      if (runId) {
+        activeWorktreeSessions.delete(runId);
+      }
+
+      return res.json({
+        success: true,
+        repairResult,
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Repair loop execution failed.',
       });
     }
   });
