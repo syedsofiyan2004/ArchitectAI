@@ -251,5 +251,61 @@ describe('Independent Verification Engine', () => {
       expect(result.verdict).toBe('INCONCLUSIVE');
       expect(result.passed).toBe(false);
     });
+
+    it('exposes executor capabilities and features generically', () => {
+      const registry = new VerificationExecutorRegistry();
+      const capabilities = registry.getAllCapabilities();
+      expect(capabilities.length).toBeGreaterThanOrEqual(1);
+      expect(capabilities[0]!.supportedStrategies).toContain('node_test_harness');
+
+      const features = registry.getAllFeatures();
+      expect(features).toContain('node_execution');
+      expect(features).toContain('metric_collection');
+    });
+
+    it('honestly returns INCONCLUSIVE when testCase lacks an executable harness template', async () => {
+      const registry = new VerificationExecutorRegistry();
+      const mockWorkspace = {
+        repositoryPath: '/mock',
+        worktreePath: '/mock/wt',
+        tempVerificationDir: '/mock/tmp',
+        baseHead: 'head',
+        branch: 'branch',
+      };
+
+      const uninstrumentedCase: VerificationCase = {
+        id: 'case-uninstrumented',
+        title: 'Uninstrumented Kernel Syscall Invariant',
+        objective: 'Verify kernel eBPF probe',
+        failureTarget: 'ebpf-overflow',
+        strategy: 'node_test_harness',
+        targetInvariantId: 'inv-ebpf',
+        sourceConcernIds: [],
+        sourceDecisionIds: [],
+        preconditions: '',
+        stimulus: '',
+        expectedProperty: 'Zero drop',
+        assertions: [
+          {
+            id: 'a1',
+            name: 'packet_drop',
+            description: 'Packets dropped',
+            operator: 'eq',
+            expected: 0,
+          },
+        ],
+        evidenceRequirements: [],
+        timeoutMs: 5000,
+        isAutomatable: true,
+        // Notice: NO harnessTemplate!
+      };
+
+      const result = await registry.executeCase(mockWorkspace, uninstrumentedCase);
+      expect(result.verdict).toBe('INCONCLUSIVE');
+      expect(result.passed).toBe(false);
+      expect(result.summary).toContain('Could not identify executable interface');
+      expect(result.assertions[0]!.observed).toBe('UNVERIFIABLE');
+    });
   });
 });
+

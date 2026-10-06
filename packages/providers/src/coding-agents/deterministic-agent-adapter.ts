@@ -181,6 +181,38 @@ export class DeterministicCodingAgentAdapter implements CodingAgentAdapter {
       return;
     }
 
+    // Target Scenario D: Single-Flight Token Manager
+    if (textToMatch.includes('token') || textToMatch.includes('refresh') || textToMatch.includes('auth')) {
+      const tokenPath = path.join(targetDir, 'src', 'token-manager.ts');
+      fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+      fs.writeFileSync(
+        tokenPath,
+        `// ArchitectAI Generated Implementation for Single-Flight Token Manager\n` +
+        `export class TokenManager {\n` +
+        `  private exchangeFn: () => Promise<any>;\n` +
+        `  private inFlightPromise: Promise<any> | null = null;\n` +
+        `  constructor(exchangeFn: () => Promise<any>) {\n` +
+        `    this.exchangeFn = exchangeFn;\n` +
+        `  }\n` +
+        `  async refreshToken(): Promise<any> {\n` +
+        `    if (this.inFlightPromise) {\n` +
+        `      return this.inFlightPromise;\n` +
+        `    }\n` +
+        `    this.inFlightPromise = (async () => {\n` +
+        `      try {\n` +
+        `        return await this.exchangeFn();\n` +
+        `      } finally {\n` +
+        `        this.inFlightPromise = null;\n` +
+        `      }\n` +
+        `    })();\n` +
+        `    return this.inFlightPromise;\n` +
+        `  }\n` +
+        `}\n`
+      );
+      logs.push(`[DeterministicAgent] Generated ${tokenPath}`);
+      return;
+    }
+
     // Fallback: create primary artifact from concrete allowedFiles or src/task-id.ts
     let targetFile = path.join('src', `${task.id.toLowerCase().replace(/[^a-z0-9]/g, '-')}.ts`);
     const candidateFile = task.allowedFiles.find((f) => !f.includes('*'));

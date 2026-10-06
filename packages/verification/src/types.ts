@@ -60,10 +60,20 @@ export interface VerificationSandbox {
 }
 
 /**
+ * Capabilities exposed by a verification executor.
+ */
+export interface ExecutorCapabilities {
+  readonly executorId: string;
+  readonly supportedStrategies: VerificationStrategy[];
+  readonly features: string[];
+}
+
+/**
  * Verification executor port for executing verification cases.
  */
 export interface VerificationExecutor {
   readonly id: string;
+  readonly capabilities: ExecutorCapabilities;
   canExecute(testCase: VerificationCase): boolean;
   execute(
     workspace: VerificationWorkspace,

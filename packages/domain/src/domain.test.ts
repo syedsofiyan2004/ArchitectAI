@@ -230,5 +230,82 @@ describe('Domain Schemas', () => {
     expect(parsedRunResult.isVerified).toBe(false);
     expect(parsedRunResult.caseResults[0].verdict).toBe('FAIL');
   });
+
+  it('validates VerificationRecipe, VerificationIntent, and NodeVerificationArtifact schemas', async () => {
+    const { VerificationRecipeSchema, VerificationIntentSchema, NodeVerificationArtifactSchema } =
+      await import('./verification.js');
+
+    const recipe = {
+      id: 'recipe-test-01',
+      name: 'Rolling Window Boundary Burst Recipe',
+      description: 'Adversarial burst across boundary',
+      applicableFailurePatterns: ['pattern-fixed-window-burst'],
+      applicableDimensions: ['bounded_resource', 'time_window'],
+      strategy: 'node_test_harness' as const,
+      requiredCapabilities: ['node_execution', 'timing_control'],
+      observationDefinitions: ['accepted_count', 'rejected_count'],
+      assertionTemplates: [
+        {
+          id: 'assert-tmpl-01',
+          name: 'accepted_count',
+          description: 'Burst <= limit',
+          operator: 'lte' as const,
+          expected: 5,
+        },
+      ],
+      setupGuidance: 'Configure limiter',
+      stimulusGuidance: 'Send boundary requests',
+      provenance: 'ArchitectAI Knowledge Base',
+    };
+
+    const parsedRecipe = VerificationRecipeSchema.parse(recipe);
+    expect(parsedRecipe.id).toBe('recipe-test-01');
+    expect(parsedRecipe.applicableFailurePatterns).toContain('pattern-fixed-window-burst');
+
+    const intent = {
+      id: 'intent-01',
+      invariantId: 'inv-test',
+      failureHypothesis: 'Fixed window resets allow 2x burst',
+      systemOperationUnderTest: 'Rate limit admission',
+      requiredSetup: 'Initialize limiter with limit 5',
+      adversarialStimulus: 'Send 5 requests at t=59s, 5 at t=61s',
+      observations: ['accepted_count', 'rejected_count'],
+      assertions: [
+        {
+          id: 'assert-burst',
+          name: 'accepted_count',
+          description: 'Accepted requests across boundary <= 5',
+          operator: 'lte' as const,
+          expected: 5,
+        },
+      ],
+      targetFiles: ['src/rate-limiter.ts'],
+      targetSymbols: ['SlidingWindowRateLimiter'],
+      requiredCapabilities: ['node_execution', 'timing_control'],
+      confidence: 0.95,
+      assumptions: ['Clients can burst'],
+      unresolvedQuestions: [],
+      isExecutable: true,
+      selectedRecipeId: 'recipe-test-01',
+    };
+
+    const parsedIntent = VerificationIntentSchema.parse(intent);
+    expect(parsedIntent.id).toBe('intent-01');
+    expect(parsedIntent.isExecutable).toBe(true);
+
+    const artifact = {
+      id: 'artifact-01',
+      intentId: 'intent-01',
+      targetFile: 'src/rate-limiter.ts',
+      targetModuleSymbol: 'SlidingWindowRateLimiter',
+      harnessScript: 'const fs = require("fs");',
+      timeoutMs: 8000,
+      expectedEvidenceKeys: ['accepted_count'],
+    };
+
+    const parsedArtifact = NodeVerificationArtifactSchema.parse(artifact);
+    expect(parsedArtifact.targetFile).toBe('src/rate-limiter.ts');
+  });
 });
+
 

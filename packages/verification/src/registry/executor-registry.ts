@@ -18,6 +18,20 @@ export class VerificationExecutorRegistry {
     this.executors.set(executor.id, executor);
   }
 
+  getAllCapabilities(): import('../types.js').ExecutorCapabilities[] {
+    return Array.from(this.executors.values()).map((e) => e.capabilities);
+  }
+
+  getAllFeatures(): string[] {
+    const featureSet = new Set<string>();
+    for (const exec of this.executors.values()) {
+      for (const feat of exec.capabilities.features) {
+        featureSet.add(feat);
+      }
+    }
+    return Array.from(featureSet);
+  }
+
   getExecutor(testCase: VerificationCase): VerificationExecutor | undefined {
     for (const executor of this.executors.values()) {
       if (executor.canExecute(testCase)) {

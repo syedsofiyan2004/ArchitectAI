@@ -4,6 +4,7 @@ import {
   ConcernRelevanceEvaluationSchema,
   ImplementationPlanSchema,
   ImplementationTask,
+  VerificationIntentSchema,
   WellKnownDimensions,
 } from '@architectai/domain';
 import {
@@ -812,6 +813,212 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
         data: validated as T,
       };
     }
+
+    if (request.schemaName === 'VerificationIntent') {
+      const userMessage = request.messages.find((m) => m.role === 'user')?.content || '';
+      const invMatch = userMessage.match(/Invariant:\s*- ID:\s*([^\r\n]+)/i);
+      const invariantId = invMatch ? invMatch[1]!.trim() : 'inv-unknown';
+
+      // Check available candidate recipes in prompt
+      const candidateRecipeMatches = Array.from(userMessage.matchAll(/- Recipe:\s*([a-zA-Z0-9_-]+)/g)).map((m) => m[1]!);
+
+      let selectedRecipeId: string | undefined;
+      let failureHypothesis = '';
+      let systemOperationUnderTest = '';
+      let requiredSetup = '';
+      let adversarialStimulus = '';
+      let observations: string[] = [];
+      let assertions: any[] = [];
+      let targetFiles: string[] = [];
+      let targetSymbols: string[] = [];
+      let requiredCapabilities: string[] = [];
+      let isExecutable = true;
+      let inconclusiveReason: string | undefined;
+
+      const selectedId = candidateRecipeMatches[0];
+
+      if (selectedId === 'recipe-rolling-window-boundary-burst') {
+        selectedRecipeId = 'recipe-rolling-window-boundary-burst';
+        failureHypothesis = 'Fixed window counter resets allow 2x quota burst across boundary';
+        systemOperationUnderTest = 'Rate limiter rolling window admission check';
+        requiredSetup = 'Rate limiter configured with 5 requests per 60000ms rolling window';
+        adversarialStimulus = 'Transmit 5 requests at second 59 followed immediately by 5 requests at second 61 across minute reset boundary';
+        observations = ['accepted_count', 'rejected_count', 'burst_span_ms'];
+        assertions = [
+          {
+            id: 'assert-burst-ceiling',
+            name: 'accepted_count',
+            description: 'Total requests accepted within any rolling 60-second window must not exceed 5',
+            operator: 'lte',
+            expected: 5,
+            unit: 'requests',
+          },
+        ];
+        targetFiles = ['src/rate-limiter.ts'];
+        targetSymbols = ['SlidingWindowRateLimiter', 'FixedWindowRateLimiter', 'RateLimiter'];
+        requiredCapabilities = ['node_execution', 'timing_control', 'metric_collection'];
+      } else if (selectedId === 'recipe-idempotent-mutation-retry') {
+        selectedRecipeId = 'recipe-idempotent-mutation-retry';
+        failureHypothesis = 'Network retries or concurrent submissions execute duplicate downstream charges';
+        systemOperationUnderTest = 'Payment charge processing with idempotency ledger locking';
+        requiredSetup = 'Payment service wired to downstream provider with idempotency key tracking';
+        adversarialStimulus = 'Simultaneously submit 2 identical charge requests with same idempotency key';
+        observations = ['downstream_charge_calls', 'total_submissions'];
+        assertions = [
+          {
+            id: 'assert-single-charge',
+            name: 'downstream_charge_calls',
+            description: 'External payment gateway charge must be called at most once',
+            operator: 'lte',
+            expected: 1,
+            unit: 'external_calls',
+          },
+        ];
+        targetFiles = ['src/idempotency.ts', 'src/payment.ts'];
+        targetSymbols = ['IdempotencyLedger', 'chargePayment'];
+        requiredCapabilities = ['node_execution', 'local_stubs', 'metric_collection'];
+      } else if (selectedId === 'recipe-bounded-worker-concurrency') {
+        selectedRecipeId = 'recipe-bounded-worker-concurrency';
+        failureHypothesis = 'Burst task submissions bypass concurrency limits and saturate system memory';
+        systemOperationUnderTest = 'Worker pool task scheduling with concurrency limit';
+        requiredSetup = 'Worker pool initialized with maxConcurrency = 2';
+        adversarialStimulus = 'Burst submit 4 asynchronous tasks with simulated processing delay';
+        observations = ['peak_concurrency', 'configured_max', 'tasks_completed'];
+        assertions = [
+          {
+            id: 'assert-peak-concurrency',
+            name: 'peak_concurrency',
+            description: 'Peak concurrent active executions must not exceed configured maxConcurrency (2)',
+            operator: 'lte',
+            expected: 2,
+            unit: 'concurrent_workers',
+          },
+        ];
+        targetFiles = ['src/worker-pool.ts'];
+        targetSymbols = ['BoundedWorkerPool', 'processImage'];
+        requiredCapabilities = ['node_execution', 'concurrency_stimulus', 'metric_collection'];
+      } else if (selectedId === 'recipe-single-flight-mutex') {
+        selectedRecipeId = 'recipe-single-flight-mutex';
+        failureHypothesis = 'Concurrent callers encountering expired token execute redundant upstream auth exchanges';
+        systemOperationUnderTest = 'Single-flight token manager refresh coalescing';
+        requiredSetup = 'Token manager initialized with mock upstream authorization endpoint';
+        adversarialStimulus = 'Simultaneously invoke refreshToken() from 5 concurrent callers upon expiration';
+        observations = ['upstream_refresh_calls', 'concurrent_callers', 'successful_tokens'];
+        assertions = [
+          {
+            id: 'assert-single-flight-refresh',
+            name: 'upstream_refresh_calls',
+            description: 'Upstream refresh exchange must be executed at most 1 time for concurrent callers',
+            operator: 'lte',
+            expected: 1,
+            unit: 'upstream_exchanges',
+          },
+        ];
+        targetFiles = ['src/token-manager.ts'];
+        targetSymbols = ['TokenManager', 'refreshToken'];
+        requiredCapabilities = ['node_execution', 'concurrency_stimulus', 'local_stubs', 'metric_collection'];
+      } else if (selectedId === 'recipe-atomic-mutation-check') {
+        selectedRecipeId = 'recipe-atomic-mutation-check';
+        failureHypothesis = 'Concurrent read-modify-write operations overwrite concurrent mutations (lost updates)';
+        systemOperationUnderTest = 'Inventory decrement mutation';
+        requiredSetup = 'Inventory store initialized with stock = 100';
+        adversarialStimulus = 'Dispatch 20 concurrent decrements simultaneously';
+        observations = ['lost_updates', 'final_inventory', 'expected_inventory'];
+        assertions = [
+          {
+            id: 'assert-zero-lost-updates',
+            name: 'lost_updates',
+            description: 'Lost update count must be zero across concurrent mutations',
+            operator: 'eq',
+            expected: 0,
+          },
+        ];
+        targetFiles = ['src/inventory.ts'];
+        targetSymbols = ['decrementInventory'];
+        requiredCapabilities = ['node_execution', 'concurrency_stimulus', 'metric_collection'];
+      } else if (selectedId === 'recipe-timeout-enforcement') {
+        selectedRecipeId = 'recipe-timeout-enforcement';
+        failureHypothesis = 'Downstream supplier latency spikes cause requests to hang indefinitely';
+        systemOperationUnderTest = 'Outbound HTTP supplier client timeout enforcement';
+        requiredSetup = 'Downstream stub configured to hang without responding; client timeout = 2000ms';
+        adversarialStimulus = 'Submit request to hanging supplier endpoint and measure client abort time';
+        observations = ['elapsed_duration_ms', 'hung_requests', 'timeout_triggered'];
+        assertions = [
+          {
+            id: 'assert-hung-requests-zero',
+            name: 'hung_requests',
+            description: 'No requests may hang beyond configured timeout limit',
+            operator: 'eq',
+            expected: 0,
+          },
+        ];
+        targetFiles = ['src/supplier-client.ts'];
+        targetSymbols = ['fetchSupplierData'];
+        requiredCapabilities = ['node_execution', 'timing_control', 'metric_collection'];
+      } else if (selectedId === 'recipe-cache-stampede-origin-guard') {
+        selectedRecipeId = 'recipe-cache-stampede-origin-guard';
+        failureHypothesis = 'Cache expiration burst causes multiple concurrent requests to hit origin database simultaneously';
+        systemOperationUnderTest = 'Cache read with coalesced origin fetch';
+        requiredSetup = 'Cache populated with expired item and mock database query counter';
+        adversarialStimulus = 'Simultaneously query expired item from 10 parallel callers';
+        observations = ['database_queries', 'concurrent_requesters'];
+        assertions = [
+          {
+            id: 'assert-origin-queries-coalesced',
+            name: 'database_queries',
+            description: 'Origin database queries must be at most 1 under concurrent cache miss burst',
+            operator: 'lte',
+            expected: 1,
+          },
+        ];
+        targetFiles = ['src/cache.ts'];
+        targetSymbols = ['getOrFetch'];
+        requiredCapabilities = ['node_execution', 'concurrency_stimulus', 'local_stubs', 'metric_collection'];
+      } else {
+        // Honest inability to verify: un-instrumentable or uncataloged invariant
+        isExecutable = false;
+        inconclusiveReason = `Could not identify executable interface for invariant (${invariantId}).`;
+        failureHypothesis = `Uninstrumented invariant: ${invariantId}`;
+        systemOperationUnderTest = 'Unidentified component interface';
+        observations = ['uninstrumented_invariant'];
+        assertions = [
+          {
+            id: `assert-${invariantId}`,
+            name: 'uninstrumented_invariant',
+            description: 'Invariant cannot be instrumented in current target repository',
+            operator: 'eq',
+            expected: true,
+          },
+        ];
+      }
+
+      resultData = {
+        id: `intent-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        invariantId,
+        failureHypothesis,
+        systemOperationUnderTest,
+        requiredSetup,
+        adversarialStimulus,
+        observations,
+        assertions,
+        targetFiles,
+        targetSymbols,
+        requiredCapabilities,
+        confidence: isExecutable ? 0.95 : 0.2,
+        assumptions: isExecutable ? ['System exhibits concurrency and timing characteristics under test'] : [],
+        unresolvedQuestions: isExecutable ? [] : ['How can this invariant be instrumented or observed in the repository?'],
+        isExecutable,
+        inconclusiveReason,
+        selectedRecipeId,
+      };
+
+      const validated = VerificationIntentSchema.parse(resultData);
+      return {
+        content: JSON.stringify(validated),
+        data: validated as T,
+      };
+    }
+
 
     // Generic fallback for any other schema
     const schema = request.schema as {

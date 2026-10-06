@@ -17,6 +17,70 @@ export const VerificationSpecSchema = z.object({
 export type VerificationSpec = z.infer<typeof VerificationSpecSchema>;
 
 /**
+ * VerificationRecipe: Reusable verification knowledge pattern linking
+ * failure modes and engineering dimensions to concrete verification strategies,
+ * observations, assertion templates, and harness guidance.
+ */
+export const VerificationRecipeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  description: z.string().min(1),
+  applicableFailurePatterns: z.array(z.string()).min(1),
+  applicableDimensions: z.array(z.string()).default([]),
+  strategy: z.string().default('node_test_harness'),
+  requiredCapabilities: z.array(z.string()).default([]),
+  observationDefinitions: z.array(z.string()).default([]),
+  assertionTemplates: z.array(z.lazy(() => VerificationAssertionSchema)).default([]),
+  setupGuidance: z.string().default(''),
+  stimulusGuidance: z.string().default(''),
+  harnessTemplate: z.string().optional(),
+  provenance: z.string().default('ArchitectAI Engineering Knowledge Base'),
+});
+export type VerificationRecipe = z.infer<typeof VerificationRecipeSchema>;
+
+/**
+ * VerificationIntent: Intermediate representation describing WHAT must be tested,
+ * how the system under test should be stimulated, and what must be observed,
+ * without the model assigning any pass/fail verdict.
+ */
+export const VerificationIntentSchema = z.object({
+  id: z.string().min(1),
+  invariantId: z.string().min(1),
+  specId: z.string().optional(),
+  failureHypothesis: z.string().min(1),
+  systemOperationUnderTest: z.string().min(1),
+  requiredSetup: z.string().default(''),
+  adversarialStimulus: z.string().default(''),
+  observations: z.array(z.string()).min(1),
+  assertions: z.array(z.lazy(() => VerificationAssertionSchema)).min(1),
+  targetFiles: z.array(z.string()).default([]),
+  targetSymbols: z.array(z.string()).default([]),
+  requiredCapabilities: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1).default(0.8),
+  assumptions: z.array(z.string()).default([]),
+  unresolvedQuestions: z.array(z.string()).default([]),
+  isExecutable: z.boolean().default(true),
+  inconclusiveReason: z.string().optional(),
+  selectedRecipeId: z.string().optional(),
+});
+export type VerificationIntent = z.infer<typeof VerificationIntentSchema>;
+
+/**
+ * NodeVerificationArtifact: Bounded executable artifact specification
+ * for the node_test_harness executor.
+ */
+export const NodeVerificationArtifactSchema = z.object({
+  id: z.string().min(1),
+  intentId: z.string().min(1),
+  targetFile: z.string().min(1),
+  targetModuleSymbol: z.string().optional(),
+  harnessScript: z.string().min(1),
+  timeoutMs: z.number().positive().default(10000),
+  expectedEvidenceKeys: z.array(z.string()).min(1),
+});
+export type NodeVerificationArtifact = z.infer<typeof NodeVerificationArtifactSchema>;
+
+/**
  * Verification strategy specifies which executor adapter runs the case.
  */
 export const VerificationStrategySchema = z.enum([

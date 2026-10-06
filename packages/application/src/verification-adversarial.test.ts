@@ -234,6 +234,74 @@ describe('Milestone 3: Independent Adversarial Verification Engine', () => {
     },
   };
 
+  const tokenRefreshContract: EngineeringContract = {
+    id: 'contract-m3-token-refresh',
+    version: '1.0.0',
+    requirement: {
+      id: 'req-token-refresh',
+      rawIntent: 'Refresh expired access tokens when concurrent client calls encounter 401.',
+      explicitConstraints: ['Only one refresh exchange active per session expiration'],
+      declaredTechStack: ['Axios', 'Node.js'],
+      context: {},
+    },
+    discoveredConcerns: [
+      {
+        id: 'concern-token-refresh-race',
+        requirementId: 'req-token-refresh',
+        title: 'Concurrent Token Refresh Race',
+        description: 'Multiple parallel API calls failing 401 race to exchange refresh token.',
+        applicabilityReason: 'Parallel client requests sharing single-use refresh token.',
+        dimensions: [WellKnownDimensions.CONCURRENCY, WellKnownDimensions.SHARED_MUTABLE_STATE, WellKnownDimensions.RETRY],
+        supportingKnowledgeIds: ['pattern-token-refresh-race'],
+        assumptions: [],
+        confidence: 0.95,
+        unresolvedQuestions: [],
+      },
+    ],
+    decisions: [
+      {
+        id: 'decision-single-flight-token',
+        problemContext: 'Coalesce concurrent token refresh exchanges.',
+        consideredOptions: [],
+        selectedOptionId: 'opt-single-flight',
+        selectedOptionName: 'Single-flight token manager with in-flight Promise reuse',
+        rationale: 'Shares the active refresh Promise with concurrent callers.',
+        evidence: [],
+        assumptions: [],
+        risksAndTradeoffs: [],
+        verificationRequirements: ['Verify upstream refresh exchange called at most once'],
+        reconsiderationTriggers: [],
+      },
+    ],
+    invariants: [
+      {
+        id: 'inv-single-flight-token-exchange',
+        property: 'Upstream refresh exchange must be executed at most 1 time for concurrent callers',
+        severity: 'critical',
+        blocksCompletion: true,
+      },
+    ],
+    verificationSpecs: [
+      {
+        id: 'verif-single-flight-token',
+        target: 'inv-single-flight-token-exchange',
+        description: 'Invoke refreshToken concurrently from 5 callers and measure upstream exchange count',
+        setup: 'Token manager initialized with mock authorization endpoint',
+        action: 'Simultaneously invoke refreshToken() from 5 callers',
+        expectedProperty: 'upstream_refresh_calls <= 1',
+        evidenceToCollect: ['upstream_refresh_calls'],
+        isAutomatable: true,
+      },
+    ],
+    assumptions: [],
+    unresolvedQuestions: [],
+    metadata: {
+      createdAt: new Date().toISOString(),
+      status: 'accepted',
+      tags: ['token-refresh', 'concurrency'],
+    },
+  };
+
   it('1. Compiles schema-valid VerificationPlan with strict traceability to invariants', async () => {
     const fixture = createDemoFixtureRepo('rate-limiter');
     cleanups.push(fixture.cleanup);
@@ -509,4 +577,117 @@ describe('Milestone 3: Independent Adversarial Verification Engine', () => {
     expect(result.isVerified).toBe(false);
     expect(result.caseResults[0].verdict).toBe('ERROR');
   });
+
+  it('8. NEW UNSEEN EXECUTABLE CASE: Vulnerable Token Refresh FAILS single-flight invariant; Correct Token Refresh PASSES', async () => {
+    const fixture = createDemoFixtureRepo('token-refresh');
+    cleanups.push(fixture.cleanup);
+
+    const wsService = new GitWorkspaceService();
+    const ws = await wsService.inspectRepository(fixture.repoPath);
+    const builder = new RepositoryContextBuilder();
+    const ctx = await builder.buildContext(tokenRefreshContract, ws);
+
+    const taskCompiler = new CompileImplementationPlanUseCase(new DeterministicDemoProviderAdapter());
+    const plan = await taskCompiler.execute(tokenRefreshContract, ctx);
+
+    // Part A: Vulnerable Agent execution
+    const vulnGateway = new CodingAgentGateway([new VulnerableCodingAgentAdapter()]);
+    const vulnExecutor = new ExecuteImplementationPlanUseCase(vulnGateway);
+    const vulnOutput = await vulnExecutor.execute(plan, 'vulnerable-agent', tokenRefreshContract, ctx);
+
+    // 1. Coding agent completed task
+    expect(vulnOutput.allTasksCompleted).toBe(true);
+
+    // 2. Repository-native checks PASSED (npm test exit 0)
+    const nativeTest = vulnOutput.executionChecks.find((c) => c.scriptName === 'test');
+    expect(nativeTest?.passed).toBe(true);
+
+    // 3. ArchitectAI Independent Verification FAILED!
+    expect(vulnOutput.verificationRun?.overallStatus).toBe('FAILED');
+    expect(vulnOutput.isVerified).toBe(false);
+
+    const tokenCase = vulnOutput.verificationRun?.caseResults.find(
+      (c) => c.targetInvariantId === 'inv-single-flight-token-exchange'
+    );
+    expect(tokenCase).toBeDefined();
+    expect(tokenCase?.verdict).toBe('FAIL');
+    expect(tokenCase?.assertions[0].expected).toBe(1);
+    expect(tokenCase?.assertions[0].observed).toBe(5); // 5 calls without single-flight!
+
+    // Part B: Correct Agent execution
+    const correctGateway = new CodingAgentGateway([new DeterministicCodingAgentAdapter()]);
+    const correctExecutor = new ExecuteImplementationPlanUseCase(correctGateway);
+    const correctOutput = await correctExecutor.execute(plan, 'deterministic-agent', tokenRefreshContract, ctx);
+
+    // Native tests pass and ArchitectAI verification is VERIFIED!
+    expect(correctOutput.executionChecks.find((c) => c.scriptName === 'test')?.passed).toBe(true);
+    expect(correctOutput.verificationRun?.overallStatus).toBe('VERIFIED');
+    expect(correctOutput.isVerified).toBe(true);
+    expect(correctOutput.verificationRun?.caseResults[0].assertions[0].observed).toBe(1); // 1 single-flight call!
+  }, 30000);
+
+  it('9. Negative Control: Uninstrumentable invariant honestly yields INCONCLUSIVE (never PASS)', async () => {
+    const uninstrumentableContract: EngineeringContract = {
+      id: 'contract-uninstrumentable',
+      version: '1.0.0',
+      requirement: {
+        id: 'req-uninstrumentable',
+        rawIntent: 'Inspect custom FPGA PCIe register timing on physical motherboard bus.',
+        explicitConstraints: ['Sub-nanosecond timing bounds'],
+        declaredTechStack: ['Verilog', 'C++'],
+        context: {},
+      },
+      discoveredConcerns: [],
+      decisions: [],
+      invariants: [
+        {
+          id: 'inv-pcie-timing',
+          property: 'PCIe bus register access timing must not exceed 2ns',
+          severity: 'critical',
+          blocksCompletion: true,
+        },
+      ],
+      verificationSpecs: [],
+      assumptions: [],
+      unresolvedQuestions: [],
+      metadata: { createdAt: new Date().toISOString(), status: 'accepted', tags: ['hardware'] },
+    };
+
+    const compiler = new CompileVerificationPlanUseCase(new DeterministicDemoProviderAdapter());
+    const fixture = createDemoFixtureRepo('rate-limiter');
+    cleanups.push(fixture.cleanup);
+
+    const wsService = new GitWorkspaceService();
+    const ws = await wsService.inspectRepository(fixture.repoPath);
+    const builder = new RepositoryContextBuilder();
+    const ctx = await builder.buildContext(uninstrumentableContract, ws);
+
+    const dummyPlan = {
+      id: 'plan-test-uninst',
+      contractId: uninstrumentableContract.id,
+      repositoryPath: fixture.repoPath,
+      summary: 'Uninstrumentable plan',
+      tasks: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    const vPlan = await compiler.execute(uninstrumentableContract, ctx, dummyPlan);
+    expect(vPlan.cases).toHaveLength(1);
+    expect(vPlan.cases[0].isAutomatable).toBe(false);
+
+    // Execute verification
+    const verifier = new VerifyImplementationUseCase();
+    const result = await verifier.execute(vPlan, {
+      repositoryPath: fixture.repoPath,
+      worktreePath: fixture.repoPath,
+      baseHead: 'HEAD',
+      branch: 'main',
+    });
+
+    expect(result.overallStatus).toBe('INCONCLUSIVE');
+    expect(result.isVerified).toBe(false);
+    expect(result.caseResults[0].verdict).toBe('INCONCLUSIVE');
+    expect(result.caseResults[0].summary).toContain('Could not identify executable interface');
+  });
 });
+

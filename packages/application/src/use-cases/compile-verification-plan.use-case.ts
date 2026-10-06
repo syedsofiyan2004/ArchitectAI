@@ -5,12 +5,45 @@ import {
   VerificationPlan,
   VerificationPlanSchema,
   VerificationCase,
+  VerificationIntent,
+  VerificationIntentSchema,
+  VerificationRecipe,
 } from '@architectai/domain';
-import { ProviderAdapter } from '@architectai/providers';
+import {
+  ProviderAdapter,
+  DeterministicDemoProviderAdapter,
+} from '@architectai/providers';
+import {
+  VerificationRecipeRepository,
+  InMemoryVerificationRecipeRepository,
+} from '@architectai/knowledge';
+import {
+  VerificationExecutorRegistry,
+  ExecutorCapabilities,
+} from '@architectai/verification';
 import { GitDiffReport } from '../services/git-isolation.service.js';
 
+/**
+ * CompileVerificationPlanUseCase compiles executable adversarial verification plans
+ * for an EngineeringContract and target workspace.
+ *
+ * Architecture Flow:
+ * EngineeringContract + RepositoryContext + Available Recipes + Executor Capabilities
+ *   → Provider Semantic Verification Reasoning (ProviderAdapter)
+ *   → Structured VerificationIntent (Zod Validated)
+ *   → Executor Capability Matching & Recipe Instantiation
+ *   → Executable VerificationCase / VerificationPlan
+ *
+ * NOTE: The compiler contains ZERO domain-keyword branches (rate, payment, worker, etc.).
+ * Invariant verification is driven entirely by data-driven recipes, provider intent synthesis,
+ * and deterministic assertion evaluation.
+ */
 export class CompileVerificationPlanUseCase {
-  constructor(protected readonly provider?: ProviderAdapter) {}
+  constructor(
+    protected readonly provider: ProviderAdapter = new DeterministicDemoProviderAdapter(),
+    protected readonly recipes: VerificationRecipeRepository = new InMemoryVerificationRecipeRepository(),
+    protected readonly executors: VerificationExecutorRegistry = new VerificationExecutorRegistry()
+  ) {}
 
   async execute(
     contract: EngineeringContract,
@@ -24,14 +57,24 @@ export class CompileVerificationPlanUseCase {
 
     const cases: VerificationCase[] = [];
 
+    // Query supported executor capabilities generically from the executor registry
+    const executorCapabilities = this.executors.getAllCapabilities();
+
     // For each engineering invariant, compile an adversarial verification case
     for (const invariant of contract.invariants) {
       const spec = contract.verificationSpecs.find((s) => s.target === invariant.id);
-      const testCase = this.compileAdversarialCase(invariant, spec, contract, context, diffReport);
+      const testCase = await this.compileInvariantCase(
+        invariant,
+        spec,
+        contract,
+        context,
+        executorCapabilities,
+        diffReport
+      );
       cases.push(testCase);
     }
 
-    // If no invariants exist, create a baseline verification case
+    // If no invariants exist, create an honest baseline verification case
     if (cases.length === 0) {
       cases.push({
         id: `case-baseline-01`,
@@ -73,364 +116,166 @@ export class CompileVerificationPlanUseCase {
     return VerificationPlanSchema.parse(verificationPlan);
   }
 
-  private compileAdversarialCase(
+  private async compileInvariantCase(
     invariant: EngineeringContract['invariants'][number],
     spec: EngineeringContract['verificationSpecs'][number] | undefined,
     contract: EngineeringContract,
-    _context: RepositoryContext,
-    _diffReport?: GitDiffReport
-  ): VerificationCase {
+    context: RepositoryContext,
+    executorCapabilities: ExecutorCapabilities[],
+    diffReport?: GitDiffReport
+  ): Promise<VerificationCase> {
     const caseId = `case-${invariant.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
-    const invariantText = (invariant.property + ' ' + (invariant.rationale || '')).toLowerCase();
-    const intentText = contract.requirement.rawIntent.toLowerCase();
 
-    // ADVERSARIAL DOMAIN A: Rate Limiter Rolling Window Boundary Burst
-    if (
-      invariantText.includes('rate') ||
-      invariantText.includes('ceiling') ||
-      invariantText.includes('burst') ||
-      intentText.includes('rate limit') ||
-      intentText.includes('requests per')
-    ) {
+    // 1. Gather relevant concerns and decisions for this invariant
+    const relevantConcerns = contract.discoveredConcerns.filter((c) =>
+      invariant.id.includes(c.id) || true
+    );
+    const relevantDecisions = contract.decisions;
+
+    // 2. Retrieve applicable candidate verification recipes from knowledge repository
+    const patternIds = relevantConcerns.flatMap((c) => c.supportingKnowledgeIds);
+    const dimensions = relevantConcerns.flatMap((c) => c.dimensions);
+
+    const candidateRecipes: VerificationRecipe[] = await this.recipes.findApplicable({
+      patternIds,
+      dimensions,
+    });
+
+    // 3. Formulate structured prompt for provider verification reasoning
+    const promptMessage = `
+Invariant:
+- ID: ${invariant.id}
+- Property: ${invariant.property}
+- Severity: ${invariant.severity}
+
+Verification Spec:
+- Setup: ${spec?.setup || ''}
+- Stimulus: ${spec?.action || ''}
+- Expected Property: ${spec?.expectedProperty || ''}
+
+Discovered Concerns:
+${relevantConcerns.map((c) => `- ${c.id}: ${c.title} (${c.dimensions.join(', ')})`).join('\n')}
+
+Decisions:
+${relevantDecisions.map((d) => `- ${d.id}: ${d.selectedOptionName} - ${d.rationale}`).join('\n')}
+
+Candidate Verification Recipes:
+${candidateRecipes.map((r) => `- Recipe: ${r.id} (${r.name}): patterns=[${r.applicableFailurePatterns.join(', ')}] dimensions=[${r.applicableDimensions.join(', ')}]`).join('\n')}
+
+Repository Context Files:
+${context.relevantFiles.join('\n')}
+
+Changed Files (Diff):
+${diffReport?.changedFiles.join('\n') || 'None yet'}
+
+Supported Executor Capabilities:
+${executorCapabilities.map((c) => `- Executor ${c.executorId}: strategies=[${c.supportedStrategies.join(', ')}] features=[${c.features.join(', ')}]`).join('\n')}
+`;
+
+    // 4. Provider semantic verification reasoning: emit schema-valid VerificationIntent
+    let intent: VerificationIntent;
+    try {
+      const providerResponse = await this.provider.generateStructured<VerificationIntent>({
+        schema: VerificationIntentSchema,
+        schemaName: 'VerificationIntent',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You are ArchitectAI Semantic Verification Planner. Reason about the invariant, failure hypothesis, adversarial stimulus, observations, and assertions to create a schema-valid VerificationIntent. You describe WHAT to test; software deterministically assigns verdicts.',
+          },
+          {
+            role: 'user',
+            content: promptMessage,
+          },
+        ],
+      });
+
+      intent = VerificationIntentSchema.parse(providerResponse.data);
+    } catch {
+      // If provider fails or emits invalid schema, fall back honestly to inconclusive intent
+      intent = {
+        id: `intent-err-${caseId}`,
+        invariantId: invariant.id,
+        specId: spec?.id,
+        failureHypothesis: `Unable to derive valid verification intent for invariant ${invariant.id}`,
+        systemOperationUnderTest: 'Unknown',
+        requiredSetup: '',
+        adversarialStimulus: '',
+        observations: ['unverifiable_property'],
+        assertions: [
+          {
+            id: `assert-err-${caseId}`,
+            name: 'unverifiable_property',
+            description: 'Verification intent derivation failed',
+            operator: 'eq',
+            expected: true,
+          },
+        ],
+        targetFiles: [],
+        targetSymbols: [],
+        requiredCapabilities: [],
+        confidence: 0,
+        assumptions: [],
+        unresolvedQuestions: ['Provider output could not be validated against VerificationIntentSchema'],
+        isExecutable: false,
+        inconclusiveReason: 'Could not identify executable interface for invariant.',
+      };
+    }
+
+    // 5. Honest inability to verify: if intent is not executable, do not fabricate fake tests
+    if (!intent.isExecutable) {
       return {
         id: caseId,
-        title: 'Adversarial Rolling-Window Boundary Burst Test',
-        objective:
-          'Expose 2x quota burst across fixed-minute boundary and verify rolling 60s invariant',
-        failureTarget: 'pattern-fixed-window-burst',
+        title: `Independent Verification for ${invariant.id}`,
+        objective: intent.failureHypothesis,
+        failureTarget: 'uninstrumented-invariant',
         strategy: 'node_test_harness',
         targetInvariantId: invariant.id,
         targetSpecId: spec?.id,
         sourceConcernIds: contract.discoveredConcerns.map((c) => c.id),
         sourceDecisionIds: contract.decisions.map((d) => d.id),
-        preconditions:
-          'Rate limiter configured for 5 requests per 60000ms rolling window',
-        stimulus:
-          'Transmit 5 requests at second 59 followed immediately by 5 requests at second 61 across minute reset boundary',
-        expectedProperty:
-          'Total requests accepted within any rolling 60-second window must not exceed 5',
-        assertions: [
-          {
-            id: 'assert-burst-ceiling',
-            name: 'accepted_count',
-            description:
-              'Accepted requests in 2-second interval across boundary must be <= 5',
-            operator: 'lte',
-            expected: 5,
-            unit: 'requests',
-          },
-        ],
-        evidenceRequirements: ['accepted_count', 'rejected_count', 'observed_timestamps'],
-        timeoutMs: 8000,
-        isAutomatable: true,
-        harnessTemplate: `
-const fs = require('fs');
-const path = require('path');
-
-const worktreeDir = "__WORKTREE_PATH__";
-const evidenceFile = "__EVIDENCE_PATH__";
-
-async function testBoundaryBurst() {
-  // Locate rate limiter in modified worktree
-  let LimiterClass;
-  const candidatePaths = [
-    path.join(worktreeDir, 'src', 'rate-limiter.ts'),
-    path.join(worktreeDir, 'src', 'rate-limiter.js'),
-    path.join(worktreeDir, 'src', 'rate-limiter.cjs'),
-  ];
-  
-  let foundPath = candidatePaths.find(p => fs.existsSync(p));
-  if (!foundPath) {
-    throw new Error('Rate limiter implementation file not found in worktree: ' + candidatePaths.join(', '));
-  }
-
-  // Load implementation dynamically
-  const mod = require(foundPath);
-  LimiterClass = mod.SlidingWindowRateLimiter || mod.FixedWindowRateLimiter || mod.RateLimiter || mod.default || mod;
-
-  // Initialize limiter with limit=5, window=60000ms
-  const limiter = typeof LimiterClass === 'function' ? new LimiterClass(5, 60000) : LimiterClass;
-
-  const key = 'test-user-boundary-adversarial';
-  let accepted = 0;
-  let rejected = 0;
-
-  // Stimulus 1: Send 5 requests at second 59 (59,000ms)
-  const t1 = 59000;
-  for (let i = 0; i < 5; i++) {
-    const isAllowed = limiter.isAllowed ? limiter.isAllowed(key, t1) : limiter(key, t1);
-    if (isAllowed) accepted++; else rejected++;
-  }
-
-  // Stimulus 2: Send 5 requests at second 61 (61,000ms) - only 2000ms later!
-  const t2 = 61000;
-  for (let i = 0; i < 5; i++) {
-    const isAllowed = limiter.isAllowed ? limiter.isAllowed(key, t2) : limiter(key, t2);
-    if (isAllowed) accepted++; else rejected++;
-  }
-
-  const observations = {
-    accepted_count: accepted,
-    rejected_count: rejected,
-    burst_span_ms: 2000,
-  };
-
-  fs.writeFileSync(evidenceFile, JSON.stringify({ observations }, null, 2));
-}
-
-testBoundaryBurst().catch(err => {
-  console.error(err.stack || err);
-  process.exit(1);
-});
-`,
+        preconditions: intent.requiredSetup,
+        stimulus: intent.adversarialStimulus,
+        expectedProperty: invariant.property,
+        assertions: intent.assertions,
+        evidenceRequirements: intent.observations,
+        timeoutMs: 5000,
+        isAutomatable: false,
+        // No harnessTemplate: execution will cleanly and honestly return INCONCLUSIVE
       };
     }
 
-    // ADVERSARIAL DOMAIN B: Duplicate Payment Side Effect
-    if (
-      invariantText.includes('payment') ||
-      invariantText.includes('duplicate') ||
-      invariantText.includes('idempot') ||
-      intentText.includes('payment') ||
-      intentText.includes('charge')
-    ) {
-      return {
-        id: caseId,
-        title: 'Adversarial Concurrent Duplicate Payment Test',
-        objective:
-          'Attempt duplicate payment executions and verify downstream charge is invoked at most once',
-        failureTarget: 'pattern-duplicate-side-effect',
-        strategy: 'node_test_harness',
-        targetInvariantId: invariant.id,
-        targetSpecId: spec?.id,
-        sourceConcernIds: contract.discoveredConcerns.map((c) => c.id),
-        sourceDecisionIds: contract.decisions.map((d) => d.id),
-        preconditions:
-          'Payment service wired to downstream provider with idempotency key tracking',
-        stimulus:
-          'Simultaneously submit 2 identical charge requests with same idempotency key',
-        expectedProperty:
-          'Downstream payment charge must execute at most 1 time for identical payment key',
-        assertions: [
-          {
-            id: 'assert-single-charge',
-            name: 'downstream_charge_calls',
-            description:
-              'External payment gateway charge must be called at most once',
-            operator: 'lte',
-            expected: 1,
-            unit: 'external_calls',
-          },
-        ],
-        evidenceRequirements: ['downstream_charge_calls', 'total_submissions'],
-        timeoutMs: 8000,
-        isAutomatable: true,
-        harnessTemplate: `
-const fs = require('fs');
-const path = require('path');
-
-const worktreeDir = "__WORKTREE_PATH__";
-const evidenceFile = "__EVIDENCE_PATH__";
-
-async function testPaymentIdempotency() {
-  const candidatePaths = [
-    path.join(worktreeDir, 'src', 'idempotency.ts'),
-    path.join(worktreeDir, 'src', 'idempotency.js'),
-    path.join(worktreeDir, 'src', 'payment.ts'),
-    path.join(worktreeDir, 'src', 'index.js'),
-  ];
-  
-  let foundPath = candidatePaths.find(p => fs.existsSync(p));
-  if (!foundPath) {
-    throw new Error('Payment/idempotency implementation not found in worktree');
-  }
-
-  const mod = require(foundPath);
-  
-  // Track downstream charge executions
-  let downstreamChargeCalls = 0;
-  async function mockDownstreamCharge(req) {
-    downstreamChargeCalls++;
-    return { status: 'success', chargeId: 'ch_' + Math.random().toString(36).slice(2) };
-  }
-
-  const idempotencyKey = 'idem_key_adversarial_9999';
-
-  // Test execution path
-  if (mod.IdempotencyLedger) {
-    const ledger = new mod.IdempotencyLedger();
-    // Simulate 2 rapid duplicate requests
-    for (let i = 0; i < 2; i++) {
-      const lockResult = ledger.checkAndLock(idempotencyKey);
-      if (lockResult.locked) {
-        const res = await mockDownstreamCharge({ key: idempotencyKey, amount: 5000 });
-        ledger.complete(idempotencyKey, res);
-      }
+    // 6. Locate matching recipe for executable harness template
+    let matchedRecipe: VerificationRecipe | undefined;
+    if (intent.selectedRecipeId) {
+      matchedRecipe = candidateRecipes.find((r) => r.id === intent.selectedRecipeId);
     }
-  } else if (typeof mod.chargePayment === 'function') {
-    // If chargePayment exists directly without idempotency check
-    await mod.chargePayment({ id: idempotencyKey, amount: 5000 });
-    await mod.chargePayment({ id: idempotencyKey, amount: 5000 });
-    // In un-idempotent implementation, chargePayment executed twice!
-    downstreamChargeCalls = 2;
-  } else {
-    throw new Error('No recognized idempotency or charge function found in module');
-  }
-
-  const observations = {
-    downstream_charge_calls: downstreamChargeCalls,
-    total_submissions: 2,
-  };
-
-  fs.writeFileSync(evidenceFile, JSON.stringify({ observations }, null, 2));
-}
-
-testPaymentIdempotency().catch(err => {
-  console.error(err.stack || err);
-  process.exit(1);
-});
-`,
-      };
+    if (!matchedRecipe && candidateRecipes.length > 0) {
+      matchedRecipe = candidateRecipes[0];
     }
 
-    // ADVERSARIAL DOMAIN C: Bounded Worker Concurrency
-    if (
-      invariantText.includes('concurrency') ||
-      invariantText.includes('worker') ||
-      invariantText.includes('pool') ||
-      intentText.includes('image') ||
-      intentText.includes('queue')
-    ) {
-      return {
-        id: caseId,
-        title: 'Adversarial Worker Concurrency Saturation Test',
-        objective:
-          'Submit a burst of delayed tasks and verify peak concurrent active executions <= configured limit',
-        failureTarget: 'pattern-unbounded-consumer-overflow',
-        strategy: 'node_test_harness',
-        targetInvariantId: invariant.id,
-        targetSpecId: spec?.id,
-        sourceConcernIds: contract.discoveredConcerns.map((c) => c.id),
-        sourceDecisionIds: contract.decisions.map((d) => d.id),
-        preconditions:
-          'Worker pool initialized with maxConcurrency = 2',
-        stimulus:
-          'Burst submit 4 asynchronous tasks with 50ms simulated processing delay',
-        expectedProperty:
-          'Peak concurrent active executions must not exceed configured maxConcurrency (2)',
-        assertions: [
-          {
-            id: 'assert-peak-concurrency',
-            name: 'peak_concurrency',
-            description:
-              'Peak concurrent running tasks must not exceed maxConcurrency',
-            operator: 'lte',
-            expected: 2,
-            unit: 'concurrent_workers',
-          },
-        ],
-        evidenceRequirements: ['peak_concurrency', 'configured_max', 'tasks_completed'],
-        timeoutMs: 8000,
-        isAutomatable: true,
-        harnessTemplate: `
-const fs = require('fs');
-const path = require('path');
+    const failureTarget =
+      matchedRecipe?.applicableFailurePatterns[0] || 'adversarial-invariant-fault';
 
-const worktreeDir = "__WORKTREE_PATH__";
-const evidenceFile = "__EVIDENCE_PATH__";
-
-async function testWorkerConcurrency() {
-  const candidatePaths = [
-    path.join(worktreeDir, 'src', 'worker-pool.ts'),
-    path.join(worktreeDir, 'src', 'worker-pool.js'),
-    path.join(worktreeDir, 'src', 'index.js'),
-  ];
-  
-  let foundPath = candidatePaths.find(p => fs.existsSync(p));
-  if (!foundPath) {
-    throw new Error('Worker pool implementation not found in worktree');
-  }
-
-  const mod = require(foundPath);
-  let activeWorkers = 0;
-  let peakActive = 0;
-  let completed = 0;
-
-  async function mockWorkerTask(item) {
-    activeWorkers++;
-    if (activeWorkers > peakActive) {
-      peakActive = activeWorkers;
-    }
-    // Simulate work duration
-    await new Promise(r => setTimeout(r, 60));
-    activeWorkers--;
-    completed++;
-    return 'done-' + item;
-  }
-
-  if (mod.BoundedWorkerPool) {
-    const pool = new mod.BoundedWorkerPool(2, mockWorkerTask);
-    await Promise.all([
-      pool.submit(1),
-      pool.submit(2),
-      pool.submit(3),
-      pool.submit(4),
-    ]);
-  } else if (typeof mod.processImage === 'function') {
-    // Unbounded implementation: calls processImage immediately for all 4
-    await Promise.all([
-      mockWorkerTask(1),
-      mockWorkerTask(2),
-      mockWorkerTask(3),
-      mockWorkerTask(4),
-    ]);
-  } else {
-    throw new Error('No recognized worker pool or image worker found in module');
-  }
-
-  const observations = {
-    peak_concurrency: peakActive,
-    configured_max: 2,
-    tasks_completed: completed,
-  };
-
-  fs.writeFileSync(evidenceFile, JSON.stringify({ observations }, null, 2));
-}
-
-testWorkerConcurrency().catch(err => {
-  console.error(err.stack || err);
-  process.exit(1);
-});
-`,
-      };
-    }
-
-    // Generic fallback invariant
     return {
       id: caseId,
-      title: `Adversarial Verification for ${invariant.id}`,
-      objective: spec?.description || invariant.property,
-      failureTarget: 'architectural-invariant-violation',
-      strategy: 'node_test_harness',
+      title: matchedRecipe?.name || `Adversarial Verification for ${invariant.id}`,
+      objective: intent.failureHypothesis,
+      failureTarget,
+      strategy: (matchedRecipe?.strategy as import('@architectai/domain').VerificationStrategy) || 'node_test_harness',
       targetInvariantId: invariant.id,
       targetSpecId: spec?.id,
       sourceConcernIds: contract.discoveredConcerns.map((c) => c.id),
       sourceDecisionIds: contract.decisions.map((d) => d.id),
-      preconditions: spec?.setup || '',
-      stimulus: spec?.action || '',
+      preconditions: intent.requiredSetup,
+      stimulus: intent.adversarialStimulus,
       expectedProperty: invariant.property,
-      assertions: [
-        {
-          id: `assert-${caseId}`,
-          name: 'invariant_satisfied',
-          description: invariant.property,
-          operator: 'eq',
-          expected: true,
-        },
-      ],
-      evidenceRequirements: ['invariant_satisfied'],
-      timeoutMs: 5000,
+      assertions: intent.assertions,
+      evidenceRequirements: intent.observations,
+      timeoutMs: 8000,
       isAutomatable: true,
+      harnessTemplate: matchedRecipe?.harnessTemplate,
     };
   }
 }

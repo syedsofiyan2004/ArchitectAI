@@ -6,11 +6,16 @@ import {
 } from '../types.js';
 
 /**
- * LocalProcessSandbox executes commands in a local child process with:
- * - Environment variable sanitation (stripping tokens, secrets, cloud credentials)
- * - Hard timeouts to prevent hangs or runaway tasks
+ * LocalProcessSandbox executes verification commands in a local child process under
+ * a Trusted Local Execution model.
+ *
+ * NOTE: This does NOT provide container-grade or VM isolation (such as Linux cgroups,
+ * namespaces, or OCI containers). It protects against accidental leakage and runaways by:
+ * - Environment variable sanitation (stripping API tokens, secrets, cloud credentials)
+ * - Hard process execution timeouts to prevent hangs or runaway tasks
  * - Bounded buffer limits for stdout/stderr
- * - Explicit trusted/local mode identifier
+ * - Temporary filesystem artifact isolation outside target repositories
+ * Full container isolation is recorded as a future infrastructure capability.
  */
 export class LocalProcessSandbox implements VerificationSandbox {
   readonly id = 'local-trusted-process-sandbox';

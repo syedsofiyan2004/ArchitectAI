@@ -7,12 +7,25 @@ import {
   VerificationExecutor,
   VerificationEvidence,
   VerificationCaseAssertionResult,
+  ExecutorCapabilities,
 } from '../types.js';
 import { LocalProcessSandbox } from '../sandbox/local-process-sandbox.js';
 import { AssertionEvaluator } from '../engine/assertion-evaluator.js';
 
 export class NodeTestHarnessExecutor implements VerificationExecutor {
   readonly id = 'node-test-harness';
+  readonly capabilities: ExecutorCapabilities = {
+    executorId: 'node-test-harness',
+    supportedStrategies: ['node_test_harness', 'custom'],
+    features: [
+      'node_execution',
+      'module_invocation',
+      'timing_control',
+      'concurrency_stimulus',
+      'metric_collection',
+      'local_stubs',
+    ],
+  };
 
   constructor(
     private readonly sandbox: LocalProcessSandbox = new LocalProcessSandbox(),
@@ -35,6 +48,29 @@ export class NodeTestHarnessExecutor implements VerificationExecutor {
     const startTime = Date.now();
     const caseId = testCase.id;
 
+    // Honest inability to verify: if no executable harness is available, return INCONCLUSIVE
+    const scriptSource = harnessContent || testCase.harnessTemplate;
+    if (!scriptSource) {
+      return {
+        caseId,
+        targetInvariantId: testCase.targetInvariantId,
+        verdict: 'INCONCLUSIVE',
+        isBlocking: false,
+        passed: false,
+        summary: `Verification inconclusive: Could not identify executable interface or harness template for invariant (${testCase.targetInvariantId}).`,
+        assertions: testCase.assertions.map((a) => ({
+          name: a.name,
+          expected: a.expected,
+          observed: 'UNVERIFIABLE',
+          passed: false,
+          message: 'Could not identify executable interface for invariant in target repository.',
+        })),
+        evidence: [],
+        durationMs: 0,
+        errorDetails: 'Could not identify executable interface for invariant.',
+      };
+    }
+
     // Ensure temporary verification directory exists outside target repo
     fs.mkdirSync(workspace.tempVerificationDir, { recursive: true });
 
@@ -45,12 +81,6 @@ export class NodeTestHarnessExecutor implements VerificationExecutor {
       workspace.tempVerificationDir,
       `evidence-${caseId.replace(/[^a-zA-Z0-9_-]/g, '_')}.json`
     );
-
-    // Get harness source: either provided parameter, from testCase.harnessTemplate, or generated
-    const scriptSource =
-      harnessContent ||
-      testCase.harnessTemplate ||
-      this.generateDefaultHarness(testCase, workspace.worktreePath, evidenceJsonPath);
 
     // Inject paths if template has placeholders
     const resolvedScriptSource = scriptSource
@@ -216,36 +246,5 @@ export class NodeTestHarnessExecutor implements VerificationExecutor {
       errorDetails: failedAssertions.length > 0 ? failedAssertions[0]?.message : undefined,
     };
   }
-
-  private generateDefaultHarness(
-    testCase: VerificationCase,
-    worktreePath: string,
-    evidencePath: string
-  ): string {
-    const sanitizedWorktree = worktreePath.replace(/\\/g, '/');
-    const sanitizedEvidence = evidencePath.replace(/\\/g, '/');
-
-    // Generate safe boilerplate that attempts to verify target implementation
-    return `
-const fs = require('fs');
-const path = require('path');
-
-const worktreeDir = "${sanitizedWorktree}";
-const evidenceFile = "${sanitizedEvidence}";
-
-async function run() {
-  const observations = {};
-  
-  // Attempt to check target invariant
-  observations["${testCase.assertions[0]?.name || 'default_check'}"] = 0;
-
-  fs.writeFileSync(evidenceFile, JSON.stringify({ observations }, null, 2));
 }
 
-run().catch(err => {
-  console.error(err);
-  process.exit(1);
-});
-`;
-  }
-}

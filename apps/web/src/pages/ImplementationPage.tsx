@@ -437,7 +437,7 @@ export const ImplementationPage: React.FC = () => {
                     ArchitectAI Independent Adversarial Verification
                   </h3>
                   <p className="text-secondary">
-                    Independent post-implementation verification evaluates the discovered engineering invariants against the modified worktree.
+                    Independent post-implementation verification evaluates discovered engineering invariants against the modified worktree under a Trusted Local Execution model.
                   </p>
                 </div>
                 <div className={`overall-verdict-badge ${executionOutput.verificationRun.overallStatus.toLowerCase()}`}>

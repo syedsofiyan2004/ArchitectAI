@@ -169,6 +169,30 @@ export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
       return;
     }
 
+    // VULNERABLE CONTROL D: Token Manager (Token Refresh Race / No Single-Flight Coalescing)
+    // Satisfies native test (has 'TokenManager' and 'refreshToken'), but lacks in-flight coalescing!
+    if (textToMatch.includes('token') || textToMatch.includes('refresh') || textToMatch.includes('auth')) {
+      const tokenPath = path.join(targetDir, 'src', 'token-manager.ts');
+      fs.mkdirSync(path.dirname(tokenPath), { recursive: true });
+      fs.writeFileSync(
+        tokenPath,
+        `// Vulnerable Token Manager\n` +
+        `// Satisfies native test requiring TokenManager and refreshToken, but lacks single-flight coalescing\n` +
+        `export class TokenManager {\n` +
+        `  private exchangeFn: () => Promise<any>;\n` +
+        `  constructor(exchangeFn: () => Promise<any>) {\n` +
+        `    this.exchangeFn = exchangeFn;\n` +
+        `  }\n` +
+        `  async refreshToken(): Promise<any> {\n` +
+        `    // Flaw: Each caller calls exchangeFn directly without coalescing\n` +
+        `    return await this.exchangeFn();\n` +
+        `  }\n` +
+        `}\n`
+      );
+      logs.push(`[VulnerableAgent] Generated vulnerable token manager at ${tokenPath}`);
+      return;
+    }
+
     // Fallback
     const targetFile = path.join(targetDir, 'src', `${task.id.toLowerCase()}.ts`);
     fs.mkdirSync(path.dirname(targetFile), { recursive: true });

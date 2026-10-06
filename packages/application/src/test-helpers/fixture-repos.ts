@@ -11,7 +11,7 @@ export interface FixtureRepo {
   cleanup: () => void;
 }
 
-export function createDemoFixtureRepo(type: 'rate-limiter' | 'payment-idempotency' | 'image-worker'): FixtureRepo {
+export function createDemoFixtureRepo(type: 'rate-limiter' | 'payment-idempotency' | 'image-worker' | 'token-refresh'): FixtureRepo {
   const tmpDir = path.join(os.tmpdir(), `architectai-fixture-${type}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
   fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
 
@@ -48,6 +48,20 @@ export function createDemoFixtureRepo(type: 'rate-limiter' | 'payment-idempotenc
     };
     indexContent = `// Payment processing service\nasync function chargePayment(chargeRequest) {\n  return { status: 'success', id: chargeRequest.id };\n}\nmodule.exports = { chargePayment };\n`;
     testContent = `// Verifies idempotency ledger\nconst fs = require('fs');\nconst path = require('path');\nconst ledgerPath = path.join(__dirname, 'src', 'idempotency.ts');\nif (!fs.existsSync(ledgerPath)) {\n  console.error('idempotency.ts not found');\n  process.exit(1);\n}\nconst content = fs.readFileSync(ledgerPath, 'utf8');\nif (!content.includes('checkAndLock') || !content.includes('complete')) {\n  console.error('idempotency.ts does not implement checkAndLock');\n  process.exit(1);\n}\nconsole.log('Payment idempotency fixture test passed!');\n`;
+  } else if (type === 'token-refresh') {
+    pkgJson = {
+      name: 'demo-token-refresh',
+      version: '1.0.0',
+      description: 'Token refresh concurrency target fixture',
+      scripts: {
+        test: 'node test.cjs',
+      },
+      dependencies: {
+        axios: '^1.7.2',
+      },
+    };
+    indexContent = `// Token refresh entry point\nconst token = 'initial-token';\nmodule.exports = { token };\n`;
+    testContent = `// Verifies token manager implementation\nconst fs = require('fs');\nconst path = require('path');\nconst tokenPath = path.join(__dirname, 'src', 'token-manager.ts');\nif (!fs.existsSync(tokenPath)) {\n  console.error('token-manager.ts not found');\n  process.exit(1);\n}\nconst content = fs.readFileSync(tokenPath, 'utf8');\nif (!content.includes('TokenManager') || !content.includes('refreshToken')) {\n  console.error('token-manager.ts does not implement TokenManager');\n  process.exit(1);\n}\nconsole.log('Token refresh fixture test passed!');\n`;
   } else {
     pkgJson = {
       name: 'demo-image-worker',

@@ -130,4 +130,33 @@ describe('InMemoryKnowledgeRepository', () => {
       expect(nodeItems.length).toBeGreaterThanOrEqual(3);
     });
   });
+
+  describe('Verification Recipe Repository', () => {
+    it('retrieves verification recipes by failure pattern and dimensions', async () => {
+      const { InMemoryVerificationRecipeRepository } = await import('./verification-recipes.js');
+      const repo = new InMemoryVerificationRecipeRepository();
+
+      const all = await repo.getAll();
+      expect(all.length).toBeGreaterThanOrEqual(4);
+
+      const burstRecipes = await repo.findForFailurePattern('pattern-fixed-window-burst');
+      expect(burstRecipes.length).toBe(1);
+      expect(burstRecipes[0].id).toBe('recipe-rolling-window-boundary-burst');
+
+      const sideEffectRecipes = await repo.findForFailurePattern('pattern-duplicate-payment-retry');
+      expect(sideEffectRecipes.length).toBe(1);
+      expect(sideEffectRecipes[0].id).toBe('recipe-idempotent-mutation-retry');
+
+      const tokenRecipes = await repo.findForFailurePattern('pattern-token-refresh-race');
+      expect(tokenRecipes.length).toBe(1);
+      expect(tokenRecipes[0].id).toBe('recipe-single-flight-mutex');
+
+      const applicable = await repo.findApplicable({
+        patternIds: ['pattern-unbounded-consumer-overflow'],
+      });
+      expect(applicable.length).toBe(1);
+      expect(applicable[0].id).toBe('recipe-bounded-worker-concurrency');
+    });
+  });
 });
+
