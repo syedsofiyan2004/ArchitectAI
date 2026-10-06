@@ -56,12 +56,25 @@ export function isBlockedIp(ip: string): boolean {
     if (/^f[cd]/i.test(normalized)) return true;
     // ff00::/8 (multicast)
     if (/^ff/i.test(normalized)) return true;
-    // IPv4-mapped IPv6
+    // IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1)
     if (normalized.includes('::ffff:')) {
-      const parts = normalized.split(':');
-      const last = parts[parts.length - 1];
-      if (last && net.isIPv4(last)) {
-        return isBlockedIp(last);
+      const remainder = normalized.split('::ffff:')[1];
+      if (remainder) {
+        if (net.isIPv4(remainder)) {
+          return isBlockedIp(remainder);
+        }
+        const hexParts = remainder.split(':');
+        if (hexParts.length === 2) {
+          const h1 = parseInt(hexParts[0] || '0', 16);
+          const h2 = parseInt(hexParts[1] || '0', 16);
+          if (!isNaN(h1) && !isNaN(h2)) {
+            const b0 = (h1 >> 8) & 0xff;
+            const b1 = h1 & 0xff;
+            const b2 = (h2 >> 8) & 0xff;
+            const b3 = h2 & 0xff;
+            return isBlockedIp(`${b0}.${b1}.${b2}.${b3}`);
+          }
+        }
       }
     }
     return false;
@@ -98,32 +111,34 @@ export class SafeDocumentationFetcher {
     }
 
     const hostname = parsed.hostname;
-    if (hostname.toLowerCase() === 'localhost' || hostname.toLowerCase().endsWith('.localhost')) {
+    const cleanHost = hostname.replace(/^\[|\]$/g, '');
+
+    if (cleanHost.toLowerCase() === 'localhost' || cleanHost.toLowerCase().endsWith('.localhost')) {
       throw new Error(`SSRF Blocked: localhost is prohibited`);
     }
 
     // DNS resolution & IP check
-    const isIp = net.isIP(hostname);
+    const isIp = net.isIP(cleanHost);
     if (isIp) {
-      if (isBlockedIp(hostname)) {
-        throw new Error(`SSRF Blocked: Destination IP ${hostname} belongs to private/restricted range`);
+      if (isBlockedIp(cleanHost)) {
+        throw new Error(`SSRF Blocked: Destination IP ${cleanHost} belongs to private/restricted range`);
       }
     } else {
       let resolvedIps: string[];
       if (this.options.dnsResolver) {
-        resolvedIps = await this.options.dnsResolver(hostname);
+        resolvedIps = await this.options.dnsResolver(cleanHost);
       } else {
-        const lookupResult = await dns.promises.lookup(hostname, { all: true });
+        const lookupResult = await dns.promises.lookup(cleanHost, { all: true });
         resolvedIps = lookupResult.map(r => r.address);
       }
 
       if (resolvedIps.length === 0) {
-        throw new Error(`DNS lookup yielded no addresses for ${hostname}`);
+        throw new Error(`DNS lookup yielded no addresses for ${cleanHost}`);
       }
 
       for (const ip of resolvedIps) {
         if (isBlockedIp(ip)) {
-          throw new Error(`SSRF Blocked: Hostname ${hostname} resolved to private/restricted IP: ${ip}`);
+          throw new Error(`SSRF Blocked: Hostname ${cleanHost} resolved to private/restricted IP: ${ip}`);
         }
       }
     }

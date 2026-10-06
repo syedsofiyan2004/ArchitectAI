@@ -452,13 +452,29 @@ describe('Engineering Knowledge Acquisition & Discovery Engine', () => {
     it('enforces streaming body size limit before buffering full content', async () => {
       const streamLimitedFetcher = new SafeDocumentationFetcher({
         maxSizeBytes: 50,
-        allowHttpForTesting: true,
+        dnsResolver: async () => ['93.184.216.34'], // Valid public IP
       });
 
-      // Fetch a large public payload (e.g., nodejs.org) with maxSizeBytes = 50
-      await expect(
-        streamLimitedFetcher.fetch('https://nodejs.org/api/documentation.json')
-      ).rejects.toThrow(/exceeded maximum limit of 50 bytes during streaming/);
+      const originalFetch = globalThis.fetch;
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(30));
+          controller.enqueue(new Uint8Array(30)); // 60 bytes > 50 bytes limit
+          controller.close();
+        }
+      });
+
+      globalThis.fetch = async () => new Response(stream, {
+        headers: { 'content-type': 'text/plain' }
+      });
+
+      try {
+        await expect(
+          streamLimitedFetcher.fetch('https://example.com/stream-test')
+        ).rejects.toThrow(/exceeded maximum limit of 50 bytes during streaming/);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
     });
   });
 
