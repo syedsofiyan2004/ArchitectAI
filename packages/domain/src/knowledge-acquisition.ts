@@ -129,7 +129,10 @@ export const ExtractedClaimSchema = z.object({
   id: z.string().min(1),
   sourceSnapshotId: z.string().min(1),
   sectionId: z.string().min(1),
-  evidenceLocator: z.string().min(1), // Exact text span or quote
+  evidenceLocator: z.string().min(1), // Exact text heading, section name, or locator
+  sourceQuote: z.string().optional(), // Bounded real source excerpt from section
+  sourceStartOffset: z.number().int().nonnegative().optional(),
+  sourceEndOffset: z.number().int().nonnegative().optional(),
   normalizedClaim: z.string().min(1),
   claimType: ExtractedClaimTypeSchema,
   entities: z.array(z.string()).default([]),
@@ -140,11 +143,15 @@ export const ExtractedClaimSchema = z.object({
 });
 export type ExtractedClaim = z.infer<typeof ExtractedClaimSchema>;
 
+export const StatementTypeSchema = z.enum(['SOURCE_FACT', 'ENGINEERING_INFERENCE']);
+export type StatementType = z.infer<typeof StatementTypeSchema>;
+
 export const CandidateStatementSchema = z.object({
   field: z.string(), // e.g. 'mechanism', 'operationalConstraints', 'officialMechanism', 'limits', etc.
   normalizedStatement: z.string(),
   supportingClaimIds: z.array(z.string()).default([]),
   supportType: z.enum(['DIRECT_SOURCE', 'MODEL_INFERENCE']).default('DIRECT_SOURCE'),
+  statementType: StatementTypeSchema.default('SOURCE_FACT').optional(),
 });
 export type CandidateStatement = z.infer<typeof CandidateStatementSchema>;
 

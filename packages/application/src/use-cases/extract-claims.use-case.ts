@@ -19,7 +19,8 @@ CRITICAL INSTRUCTIONS:
 4. If a claim is explicitly stated, use "DIRECT_SOURCE_CLAIM". If it must be heavily inferred from context, use "MODEL_INFERENCE".
 
 Output a list of claims. Each claim should contain:
-- evidenceLocator: Exact short quote or precise description of where the claim is found.
+- sourceQuote: Verbatim text excerpt (20–500 characters) directly from the Section Text supporting this claim (MANDATORY for DIRECT_SOURCE_CLAIM).
+- evidenceLocator: Description or location of the claim within the section.
 - normalizedClaim: A clear, standalone statement of the fact.
 - claimType: "DIRECT_SOURCE_CLAIM" or "MODEL_INFERENCE"
 - entities: The technologies or concepts mentioned.
@@ -29,6 +30,7 @@ Output a list of claims. Each claim should contain:
 const ClaimsResponseSchema = z.object({
   claims: z.array(z.object({
     evidenceLocator: z.string(),
+    sourceQuote: z.string().optional(),
     normalizedClaim: z.string(),
     claimType: z.enum(['DIRECT_SOURCE_CLAIM', 'MODEL_INFERENCE']),
     entities: z.array(z.string()),
@@ -73,6 +75,7 @@ ${section.content}
           sourceSnapshotId: snapshot.id,
           sectionId: section.id,
           evidenceLocator: c.evidenceLocator,
+          sourceQuote: c.sourceQuote || (c.claimType === 'DIRECT_SOURCE_CLAIM' ? c.evidenceLocator : undefined),
           normalizedClaim: c.normalizedClaim,
           claimType: c.claimType,
           entities: c.entities,

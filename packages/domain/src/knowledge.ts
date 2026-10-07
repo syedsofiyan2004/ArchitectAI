@@ -50,10 +50,13 @@ export const KnowledgeEvidenceSchema = z.object({
   qualityNotes: z.string().optional(),
   sourceId: z.string().optional(),
   snapshotId: z.string().optional(),
+  sectionId: z.string().optional(),
   claimId: z.string().optional(),
   trustTier: z.string().optional(),
   publisher: z.string().optional(),
   locator: z.string().optional(),
+  sourceQuote: z.string().optional(),
+  evidenceType: z.enum(['SOURCE_FACT', 'ENGINEERING_INFERENCE']).default('SOURCE_FACT').optional(),
 });
 
 export type KnowledgeEvidence = z.infer<typeof KnowledgeEvidenceSchema>;

@@ -9,12 +9,14 @@ import {
   EngineeringKnowledgeItem,
   EvidenceSourceType,
   SourceTrustTier,
+  ExtractedClaim,
   isVersionOverlapping
 } from '@architectai/domain';
 import { KnowledgeSourceConnector } from '../services/knowledge-connectors.js';
 import { ExtractClaimsUseCase } from './extract-claims.use-case.js';
 import { ExtractCandidatesUseCase } from './extract-candidates.use-case.js';
 import { GroundingValidator } from './grounding-validator.js';
+import { ClaimProvenanceValidator } from '../services/claim-provenance-validator.js';
 import { KnowledgeAcquisitionRegistry } from '@architectai/knowledge';
 import { ProviderAdapter } from '@architectai/providers';
 
@@ -33,6 +35,7 @@ export class AcquireKnowledgeFromSourceUseCase {
   private claimsExtractor: ExtractClaimsUseCase;
   private candidatesExtractor: ExtractCandidatesUseCase;
   private groundingValidator: GroundingValidator;
+  private claimProvenanceValidator: ClaimProvenanceValidator;
 
   constructor(
     private readonly provider: ProviderAdapter,
@@ -42,6 +45,7 @@ export class AcquireKnowledgeFromSourceUseCase {
     this.claimsExtractor = new ExtractClaimsUseCase(provider);
     this.candidatesExtractor = new ExtractCandidatesUseCase(provider);
     this.groundingValidator = new GroundingValidator(provider);
+    this.claimProvenanceValidator = new ClaimProvenanceValidator();
   }
 
   /**
@@ -117,12 +121,18 @@ export class AcquireKnowledgeFromSourceUseCase {
       this.registry.saveSnapshot(snapshot);
       run.metrics.sectionsCount = snapshot.sections.length;
 
-      // 4. Extract Claims
-      const claims = await this.claimsExtractor.execute(source, snapshot);
-      run.metrics.extractedClaimsCount = claims.length;
-      for (const claim of claims) {
-        this.registry.saveClaim(claim);
+      // 4. Extract Claims with deterministic provenance validation
+      const rawClaims = await this.claimsExtractor.execute(source, snapshot);
+      const claims: ExtractedClaim[] = [];
+
+      for (const rawClaim of rawClaims) {
+        const valResult = this.claimProvenanceValidator.validateClaim(rawClaim, snapshot);
+        if (valResult.isValid) {
+          this.registry.saveClaim(valResult.validatedClaim);
+          claims.push(valResult.validatedClaim);
+        }
       }
+      run.metrics.extractedClaimsCount = claims.length;
 
       // 5. Compare with previous snapshot (if this is an update)
       if (previousSnapshot) {
@@ -235,15 +245,20 @@ export class AcquireKnowledgeFromSourceUseCase {
           );
 
           if (isDirectContradiction) {
-            // Create KnowledgeConflict
-            const existingSource = this.registry.getSource(existing.sourceClaimIds[0] ? this.registry.getClaim(existing.sourceClaimIds[0])?.sourceSnapshotId || '' : '') || source;
+            // Correct source resolution chain:
+            // existing claim -> sourceSnapshotId -> SourceSnapshot -> sourceId -> KnowledgeSource
+            const existingClaimId = existing.sourceClaimIds[0];
+            const existingClaim = existingClaimId ? this.registry.getClaim(existingClaimId) : undefined;
+            const existingSnapshot = existingClaim ? this.registry.getSnapshot(existingClaim.sourceSnapshotId) : undefined;
+            const existingSource = existingSnapshot ? this.registry.getSource(existingSnapshot.sourceId) : undefined;
+
             const conflict: KnowledgeConflict = KnowledgeConflictSchema.parse({
               id: `conflict-${crypto.randomUUID()}`,
               concept: candidate.normalizedConcept,
               competingClaimIds: [...candidate.sourceClaimIds, ...existing.sourceClaimIds],
-              sourceAuthorityLevels: [source.trustTier, existingSource.trustTier || source.trustTier],
-              sourceIds: [source.id, existingSource.id || source.id],
-              snapshotIds: [snapshot.id],
+              sourceAuthorityLevels: [source.trustTier, existingSource ? existingSource.trustTier : source.trustTier],
+              sourceIds: [source.id, existingSource ? existingSource.id : source.id],
+              snapshotIds: [snapshot.id, existingSnapshot ? existingSnapshot.id : snapshot.id],
               versionApplicabilities: [
                 typeof candidate.versionApplicability === 'object' ? candidate.versionApplicability.rawText : String(candidate.versionApplicability),
                 typeof existing.versionApplicability === 'object' ? existing.versionApplicability.rawText : String(existing.versionApplicability),
@@ -267,16 +282,28 @@ export class AcquireKnowledgeFromSourceUseCase {
       }
     }
 
-    // L3 automatic acceptance policy
+    // L3 automatic acceptance policy:
+    // An L3 item may be automatically ACCEPTED only if it contains at least one mechanically source-anchored
+    // direct factual statement from an eligible trusted source.
     if (candidate.proposedLevel === 'technology_specific') {
       const allowedTiers: SourceTrustTier[] = ['TIER_1_STANDARD', 'TIER_2_OFFICIAL', 'TIER_3_GUIDANCE', 'TIER_4_PAPER'];
-      if (allowedTiers.includes(source.trustTier)) {
+
+      const hasAnchoredDirectStatement = candidate.fieldStatements.some(s =>
+        s.supportType === 'DIRECT_SOURCE' &&
+        s.statementType === 'SOURCE_FACT' &&
+        s.supportingClaimIds.some(cid => {
+          const cl = this.registry.getClaim(cid);
+          return cl && cl.claimType === 'DIRECT_SOURCE_CLAIM' && !!cl.sourceQuote;
+        })
+      );
+
+      if (allowedTiers.includes(source.trustTier) && hasAnchoredDirectStatement) {
         candidate.state = 'ACCEPTED';
         return;
       }
     }
 
-    // L2 requires manual review, leave as GROUNDED
+    // L2 or items containing only MODEL_INFERENCE require manual review, leave as GROUNDED
   }
 
   private convertToKnowledgeItem(
@@ -301,23 +328,30 @@ export class AcquireKnowledgeFromSourceUseCase {
       status: 'ACCEPTED',
       evidence: candidate.sourceClaimIds.map(claimId => {
         const claim = this.registry.getClaim(claimId);
+        const snap = claim ? this.registry.getSnapshot(claim.sourceSnapshotId) : snapshot;
+        const src = snap ? this.registry.getSource(snap.sourceId) : source;
+        const sec = snap?.sections.find(s => s.id === claim?.sectionId);
+
         return {
           id: `ev-${crypto.randomUUID()}`,
-          sourceId: source.id,
-          snapshotId: snapshot.id,
+          sourceId: src ? src.id : source.id,
+          snapshotId: snap ? snap.id : snapshot.id,
+          sectionId: claim?.sectionId,
           claimId: claim ? claim.id : claimId,
-          sourceType: mapEvidenceSourceType(source.trustTier, source.sourceType),
-          sourceUrlOrIdentifier: source.canonicalUrl,
-          title: `${source.publisher} — ${source.technology || ''}`.trim(),
-          publisher: source.publisher,
-          technology: candidate.exactTechnology || source.technology,
-          trustTier: source.trustTier,
+          sourceQuote: claim?.sourceQuote,
+          sourceType: mapEvidenceSourceType(src?.trustTier || source.trustTier, src?.sourceType || source.sourceType),
+          sourceUrlOrIdentifier: src?.canonicalUrl || source.canonicalUrl,
+          title: `${src?.publisher || source.publisher} — ${src?.technology || source.technology || ''}`.trim(),
+          publisher: src?.publisher || source.publisher,
+          technology: candidate.exactTechnology || src?.technology || source.technology,
+          trustTier: src?.trustTier || source.trustTier,
           versionApplicability: versionText,
-          retrievedAt: snapshot.retrievedAt,
+          retrievedAt: snap ? snap.retrievedAt : snapshot.retrievedAt,
           excerptOrClaim: claim ? claim.normalizedClaim : candidate.mechanism,
           locator: claim?.evidenceLocator,
           confidenceScore: claim ? claim.confidence : candidate.confidence,
-          qualityNotes: `Extracted from claim ${claim?.id} in snapshot ${snapshot.id}`,
+          evidenceType: claim?.claimType === 'DIRECT_SOURCE_CLAIM' ? 'SOURCE_FACT' : 'ENGINEERING_INFERENCE',
+          qualityNotes: `Verified provenance: section "${sec?.heading || claim?.sectionId || 'unknown'}" in snapshot ${snap?.id || snapshot.id}`,
         };
       }),
       relationships: candidate.proposedRelationships.map(r => ({
