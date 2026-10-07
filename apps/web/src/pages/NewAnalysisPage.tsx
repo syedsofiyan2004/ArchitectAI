@@ -21,7 +21,18 @@ export const NewAnalysisPage: React.FC<NewAnalysisPageProps> = ({ onOpenExamples
 
   const navigate = useNavigate();
   const location = useLocation();
-  const { createRun } = useRuns();
+  const { createRun, activeRepository } = useRuns();
+
+  useEffect(() => {
+    if (activeRepository) {
+      if (!language && activeRepository.detectedLanguages?.length) {
+        setLanguage(activeRepository.detectedLanguages[0]);
+      }
+      if (!framework && activeRepository.detectedFrameworks?.length) {
+        setFramework(activeRepository.detectedFrameworks[0]);
+      }
+    }
+  }, [activeRepository]);
 
   // If navigated from an example or state
   useEffect(() => {

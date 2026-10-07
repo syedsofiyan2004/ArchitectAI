@@ -52,8 +52,20 @@ export const ReviewPage: React.FC = () => {
   const { run, onOpenEvidence } = useOutletContext<RunContext>();
   const { recordQuestionAnswer } = useRuns();
   const navigate = useNavigate();
+  if (!run.result || !run.result.contract) {
+    return (
+      <div className="review-page-layout">
+        <section className="review-hero">
+          <div className="review-hero-top">
+            <span className="review-tag font-mono">Architecture Review</span>
+          </div>
+          <h1 className="review-title">Loading architecture findings...</h1>
+        </section>
+      </div>
+    );
+  }
 
-  const contract = run.result!.contract;
+  const contract = run.result.contract;
   const concerns = contract.discoveredConcerns;
 
   const criticalCount = concerns.filter((c) => c.confidence >= 0.9).length;

@@ -190,5 +190,132 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     const json = await res.json();
     expect(json.error).toBeDefined();
   });
+
+  // --- Milestone 6 Productization & Persistence Tests ---
+  it('Milestone 6: Project lifecycle APIs create and list persistent projects', async () => {
+    const createRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: 'Billing Service',
+        description: 'Subscription billing & invoicing engine',
+      }),
+    });
+
+    expect(createRes.status).toBe(201);
+    const createJson = await createRes.json();
+    expect(createJson.success).toBe(true);
+    expect(createJson.project.name).toBe('Billing Service');
+
+    const projectId = createJson.project.id;
+
+    // Fetch project
+    const getRes = await fetch(`${baseUrl}/api/projects/${projectId}`);
+    expect(getRes.status).toBe(200);
+    const getJson = await getRes.json();
+    expect(getJson.project.id).toBe(projectId);
+
+    // List projects
+    const listRes = await fetch(`${baseUrl}/api/projects`);
+    expect(listRes.status).toBe(200);
+    const listJson = await listRes.json();
+    expect(listJson.projects.some((p: any) => p.id === projectId)).toBe(true);
+  });
+
+  it('Milestone 6: Repository registration connects git repo to project', async () => {
+    // Create project
+    const pRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Repo Test Project' }),
+    });
+    const { project } = await pRes.json();
+
+    // Register current workspace root
+    const regRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoPath: process.cwd() }),
+    });
+
+    expect(regRes.status).toBe(200);
+    const regJson = await regRes.json();
+    expect(regJson.success).toBe(true);
+    expect(regJson.repository.projectId).toBe(project.id);
+    expect(regJson.repository.canonicalLocalPath).toBeDefined();
+  });
+
+  it('Milestone 6: Asynchronous project run creation persists run before and after analysis', async () => {
+    // Create project
+    const pRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Async Run Project' }),
+    });
+    const { project } = await pRes.json();
+
+    // Trigger run creation
+    const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rawIntent: 'Limit each authenticated user to 100 API requests per minute.',
+        declaredTechStack: ['Redis', 'Node.js'],
+        context: { database: 'Redis' },
+      }),
+    });
+
+    expect(runRes.status).toBe(201);
+    const runJson = await runRes.json();
+    expect(runJson.success).toBe(true);
+    expect(runJson.runId).toBeDefined();
+    expect(runJson.state).toBe('ANALYSIS_COMPLETE');
+
+    // Query run by ID
+    const getRunRes = await fetch(`${baseUrl}/api/runs/${runJson.runId}`);
+    expect(getRunRes.status).toBe(200);
+    const getRunJson = await getRunRes.json();
+    expect(getRunJson.run.id).toBe(runJson.runId);
+    expect(getRunJson.run.contract).toBeDefined();
+    expect(getRunJson.revisions.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('Milestone 6: Security - Untrusted external Origin is rejected by anti-CSRF check', async () => {
+    const res = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'http://malicious-attacker-website.com',
+      },
+      body: JSON.stringify({ name: 'Attacker Project' }),
+    });
+
+    expect(res.status).toBe(403);
+    const json = await res.json();
+    expect(json.error).toContain('Forbidden');
+  });
+
+  it('Milestone 6: GET /api/system/capabilities exposes complete system readiness breakdown', async () => {
+    const res = await fetch(`${baseUrl}/api/system/capabilities`);
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.capabilities.analysisProvider).toBeDefined();
+    expect(json.capabilities.knowledgeRegistry).toBe('READY');
+    expect(json.capabilities.git).toBe('READY');
+    expect(json.capabilities.verificationRuntime).toBe('READY');
+  });
+
+  it('Milestone 6: Provider connection test returns health status without exposing secrets', async () => {
+    const res = await fetch(`${baseUrl}/api/providers/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.success).toBe(true);
+    expect(json.healthy).toBe(true);
+    expect(JSON.stringify(json)).not.toContain('sk-');
+  });
 });
 

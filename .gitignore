@@ -4,3 +4,4 @@ dist/
 .npm
 .DS_Store
 .playwright-cli/
+data/

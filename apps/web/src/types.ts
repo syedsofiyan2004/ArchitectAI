@@ -13,6 +13,9 @@ import {
   RepairPlan,
   RepairAttempt,
   RepairRunResult,
+  Project,
+  ProjectRepository,
+  WorkspaceSettings,
 } from '@architectai/domain';
 
 export type {
@@ -20,6 +23,9 @@ export type {
   RepairPlan,
   RepairAttempt,
   RepairRunResult,
+  Project,
+  ProjectRepository,
+  WorkspaceSettings,
 };
 
 export interface AgentInfo {
@@ -98,10 +104,12 @@ export interface ServerConfig {
   providerName: string;
   modelName: string;
   knowledgeItemsCount: number;
+  csrfToken?: string;
 }
 
 export interface AnalysisRunRecord {
   id: string;
+  projectId?: string;
   title: string;
   rawIntent: string;
   context: Record<string, string>;
@@ -109,6 +117,7 @@ export interface AnalysisRunRecord {
   declaredTechStack: string[];
   createdAt: string;
   status: 'analyzing' | 'completed' | 'failed';
+  state?: string;
   error?: string;
   result?: AnalyzeArchitectureOutput;
   // Execution state for this run
@@ -117,4 +126,7 @@ export interface AnalysisRunRecord {
   execution?: PlanExecutionOutput;
   // User answers to unresolved questions
   userAnswers?: Record<string, string>;
+  revisions?: unknown[];
+  sessions?: unknown[];
+  artifacts?: unknown[];
 }

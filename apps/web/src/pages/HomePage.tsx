@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, Sparkles, ArrowRight, Clock, ShieldAlert, CheckCircle2, ChevronRight } from 'lucide-react';
+import { Plus, Sparkles, ArrowRight, Clock, ShieldAlert, ChevronRight, FolderGit2, RefreshCw, GitBranch } from 'lucide-react';
 import { useRuns } from '../store/runs';
 
 interface HomePageProps {
@@ -8,8 +8,58 @@ interface HomePageProps {
 }
 
 export const HomePage: React.FC<HomePageProps> = ({ onOpenExamples }) => {
-  const { runs } = useRuns();
+  const {
+    runs,
+    projects,
+    activeProject,
+    activeRepository,
+    createProject,
+    selectProject,
+    registerRepository,
+    refreshRepository,
+  } = useRuns();
   const navigate = useNavigate();
+
+  const [newProjectName, setNewProjectName] = useState('');
+  const [showNewProject, setShowNewProject] = useState(false);
+  const [repoPathInput, setRepoPathInput] = useState('');
+  const [showConnectRepo, setShowConnectRepo] = useState(false);
+  const [repoError, setRepoError] = useState<string | null>(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleCreateProject = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProjectName.trim()) return;
+    try {
+      await createProject(newProjectName.trim());
+      setNewProjectName('');
+      setShowNewProject(false);
+    } catch (err: unknown) {
+      console.error('Failed to create project', err);
+    }
+  };
+
+  const handleRegisterRepo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!repoPathInput.trim()) return;
+    setRepoError(null);
+    try {
+      await registerRepository(repoPathInput.trim());
+      setRepoPathInput('');
+      setShowConnectRepo(false);
+    } catch (err: unknown) {
+      setRepoError(err instanceof Error ? err.message : 'Failed to register repository');
+    }
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await refreshRepository();
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   return (
     <div className="home-container">
@@ -41,6 +91,186 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenExamples }) => {
             <span>Try an Example</span>
           </button>
         </div>
+      </section>
+
+      {/* Project & Repository Workspace Header */}
+      <section className="project-workspace-banner" style={{
+        background: 'var(--card-bg, #161b22)',
+        border: '1px solid var(--border-color, #30363d)',
+        borderRadius: '8px',
+        padding: '16px 20px',
+        marginBottom: '28px',
+        display: 'flex',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: '12px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+          <FolderGit2 size={18} className="icon-brand" style={{ color: 'var(--brand-blue, #58a6ff)' }} />
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted, #8b949e)', textTransform: 'uppercase', letterSpacing: '0.05em' }} className="font-mono">
+                Active Project:
+              </span>
+              {projects.length > 1 ? (
+                <select
+                  value={activeProject?.id || ''}
+                  onChange={(e) => selectProject(e.target.value)}
+                  style={{
+                    background: 'var(--bg-dark, #0d1117)',
+                    color: 'var(--text-primary, #c9d1d9)',
+                    border: '1px solid var(--border-color, #30363d)',
+                    borderRadius: '4px',
+                    padding: '2px 8px',
+                    fontSize: '13px',
+                  }}
+                >
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>{p.name}</option>
+                  ))}
+                </select>
+              ) : (
+                <strong style={{ fontSize: '14px', color: 'var(--text-primary, #f0f6fc)' }}>
+                  {activeProject?.name || 'Default Workspace'}
+                </strong>
+              )}
+              <button
+                type="button"
+                onClick={() => setShowNewProject(!showNewProject)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: 'var(--brand-blue, #58a6ff)',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  marginLeft: '4px',
+                }}
+              >
+                + New Project
+              </button>
+            </div>
+
+            {/* Registered Repo Info */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', fontSize: '13px', color: 'var(--text-muted, #8b949e)' }}>
+              {activeRepository ? (
+                <>
+                  <span style={{ color: 'var(--text-primary, #c9d1d9)' }}>{activeRepository.repositoryName}</span>
+                  <span className="font-mono" style={{ display: 'flex', alignItems: 'center', gap: '4px', fontSize: '12px' }}>
+                    <GitBranch size={12} />
+                    {activeRepository.defaultBranch}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleRefresh}
+                    disabled={isRefreshing}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--text-muted, #8b949e)',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      fontSize: '12px',
+                    }}
+                    title="Refresh repository context"
+                  >
+                    <RefreshCw size={12} className={isRefreshing ? 'spin' : ''} />
+                    <span>Refresh</span>
+                  </button>
+                </>
+              ) : (
+                <span style={{ color: 'var(--text-muted, #8b949e)' }}>
+                  No repository linked.{' '}
+                  <button
+                    type="button"
+                    onClick={() => setShowConnectRepo(true)}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--brand-blue, #58a6ff)',
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      fontSize: '13px',
+                    }}
+                  >
+                    Connect local Git repo
+                  </button>
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Modal/Form to Connect Repository */}
+        {showConnectRepo && (
+          <form onSubmit={handleRegisterRepo} style={{ display: 'flex', gap: '8px', alignItems: 'center', width: '100%', marginTop: '8px' }}>
+            <input
+              type="text"
+              placeholder="e.g. D:/architectai or /path/to/repo"
+              value={repoPathInput}
+              onChange={(e) => setRepoPathInput(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                background: 'var(--bg-dark, #0d1117)',
+                border: '1px solid var(--border-color, #30363d)',
+                borderRadius: '4px',
+                color: '#fff',
+                fontSize: '13px',
+              }}
+            />
+            <button type="submit" className="btn-primary" style={{ padding: '6px 12px', fontSize: '13px' }}>
+              Connect
+            </button>
+            <button
+              type="button"
+              onClick={() => { setShowConnectRepo(false); setRepoError(null); }}
+              className="btn-secondary"
+              style={{ padding: '6px 10px', fontSize: '13px' }}
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+
+        {showNewProject && (
+          <form onSubmit={handleCreateProject} style={{ display: 'flex', gap: '8px', alignItems: 'center', width: '100%', marginTop: '8px' }}>
+            <input
+              type="text"
+              placeholder="New Project Name (e.g. Payments API)"
+              value={newProjectName}
+              onChange={(e) => setNewProjectName(e.target.value)}
+              style={{
+                flex: 1,
+                padding: '6px 10px',
+                background: 'var(--bg-dark, #0d1117)',
+                border: '1px solid var(--border-color, #30363d)',
+                borderRadius: '4px',
+                color: '#fff',
+                fontSize: '13px',
+              }}
+            />
+            <button type="submit" className="btn-primary" style={{ padding: '6px 12px', fontSize: '13px' }}>
+              Create
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowNewProject(false)}
+              className="btn-secondary"
+              style={{ padding: '6px 10px', fontSize: '13px' }}
+            >
+              Cancel
+            </button>
+          </form>
+        )}
+
+        {repoError && (
+          <div style={{ color: 'var(--danger-red, #f85149)', fontSize: '12px', width: '100%', marginTop: '4px' }}>
+            {repoError}
+          </div>
+        )}
       </section>
 
       {/* Recent Analyses Section */}

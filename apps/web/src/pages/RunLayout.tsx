@@ -18,15 +18,64 @@ import { EvidenceDrawer } from '../components/layout/EvidenceDrawer';
 
 export const RunLayout: React.FC = () => {
   const { runId } = useParams<{ runId: string }>();
-  const { getRun } = useRuns();
+  const { getRun, updateRun } = useRuns();
   const navigate = useNavigate();
 
   const [isEvidenceOpen, setIsEvidenceOpen] = useState(false);
   const [evidenceTab, setEvidenceTab] = useState<'knowledge' | 'contract' | 'assumptions'>('knowledge');
+  const [loadingServerRun, setLoadingServerRun] = useState(false);
 
   const run = runId ? getRun(runId) : undefined;
 
+  React.useEffect(() => {
+    if ((!run || !run.result) && runId && !loadingServerRun) {
+      setLoadingServerRun(true);
+      fetch(`/api/runs/${runId}`)
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data && data.success && data.run) {
+            const r = data.run;
+            updateRun(r.id, {
+              id: r.id,
+              projectId: r.projectId,
+              title: r.title,
+              rawIntent: r.rawIntent,
+              context: r.context,
+              explicitConstraints: r.explicitConstraints,
+              declaredTechStack: r.declaredTechStack,
+              createdAt: r.createdAt,
+              status: (r.state === 'FAILED' && !r.contract) ? 'failed' : r.state === 'ANALYZING' ? 'analyzing' : 'completed',
+              state: r.state,
+              userAnswers: r.userAnswers || {},
+              result: r.contract ? {
+                contract: r.contract,
+                stages: [],
+                dimensionsDetected: r.dimensionsDetected || [],
+                mode: r.analysisMode === 'deterministic' ? 'deterministic-demo' : 'remote-model',
+                decomposition: r.decomposition,
+              } : undefined,
+              revisions: data.revisions,
+              sessions: data.sessions,
+              artifacts: data.artifacts,
+            });
+          }
+        })
+        .catch(() => {})
+        .finally(() => setLoadingServerRun(false));
+    }
+  }, [run, runId, loadingServerRun, updateRun]);
+
   if (!run) {
+    if (loadingServerRun) {
+      return (
+        <div className="analyzing-state-layout">
+          <div className="analyzing-card">
+            <div className="pipeline-spinner" aria-hidden="true"></div>
+            <h3>Loading architecture run...</h3>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="run-not-found">
         <AlertCircle size={32} className="icon-danger" />
@@ -94,7 +143,7 @@ export const RunLayout: React.FC = () => {
   }
 
   // Failed State
-  if (run.status === 'failed') {
+  if (run.status === 'failed' && !run.result) {
     return (
       <div className="run-failed-layout">
         <AlertCircle size={36} className="icon-danger" />
