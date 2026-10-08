@@ -34,6 +34,9 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Build web application
+        run: pnpm run web:build
+
       - name: Unit tests
         run: pnpm run test
 
@@ -42,7 +45,4 @@ jobs:
 
       - name: CLI walking skeleton
         run: pnpm run cli:skeleton
-
-      - name: Build web application
-        run: pnpm run web:build
 

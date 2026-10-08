@@ -2,6 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { chromium, type Browser } from 'playwright';
 import { createServer } from '../../apps/web/server/server.js';
 import type { Server } from 'node:http';
+import * as path from 'node:path';
+import * as fs from 'node:fs';
+import { execSync } from 'node:child_process';
 
 describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
   let server: Server;
@@ -10,6 +13,11 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
   let hasChromium = false;
 
   beforeAll(async () => {
+    const distIndex = path.resolve(__dirname, '../../apps/web/dist/index.html');
+    if (!fs.existsSync(distIndex)) {
+      execSync('pnpm run web:build', { cwd: path.resolve(__dirname, '../..'), stdio: 'inherit' });
+    }
+
     const app = await createServer();
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {

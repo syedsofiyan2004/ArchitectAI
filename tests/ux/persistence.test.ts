@@ -3,6 +3,7 @@ import { chromium, type Browser } from 'playwright';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { execSync } from 'node:child_process';
 import type { Server } from 'node:http';
 import { createServer } from '../../apps/web/server/server.js';
 import { createDemoFixtureRepo, FixtureRepo } from '../../packages/application/src/test-helpers/fixture-repos.js';
@@ -18,6 +19,11 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
   let fixtureRepo: FixtureRepo;
 
   beforeAll(async () => {
+    const distIndex = path.resolve(__dirname, '../../apps/web/dist/index.html');
+    if (!fs.existsSync(distIndex)) {
+      execSync('pnpm run web:build', { cwd: path.resolve(__dirname, '../..'), stdio: 'inherit' });
+    }
+
     tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'architectai-e2e-m6-'));
     dbPath = path.join(tempDir, 'product.db');
     artifactsDir = path.join(tempDir, 'artifacts');
