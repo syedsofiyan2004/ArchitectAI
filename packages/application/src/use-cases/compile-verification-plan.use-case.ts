@@ -127,9 +127,10 @@ export class CompileVerificationPlanUseCase {
     const caseId = `case-${invariant.id.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 
     // 1. Gather relevant concerns and decisions for this invariant
-    const relevantConcerns = contract.discoveredConcerns.filter((c) =>
-      invariant.id.includes(c.id) || true
+    const matchedConcerns = contract.discoveredConcerns.filter((c) =>
+      invariant.id.includes(c.id) || invariant.property.toLowerCase().includes(c.title.toLowerCase())
     );
+    const relevantConcerns = matchedConcerns.length > 0 ? matchedConcerns : contract.discoveredConcerns;
     const relevantDecisions = contract.decisions;
 
     // 2. Retrieve applicable candidate verification recipes from knowledge repository

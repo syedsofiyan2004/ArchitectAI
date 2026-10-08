@@ -1,13 +1,15 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createServer } from './server.js';
+import { createServer, DEFAULT_HOST } from './server.js';
 import type { Server } from 'node:http';
 
 describe('ArchitectAI Web Server & Endpoints', () => {
   let server: Server;
   let baseUrl: string;
+  let serverToken: string;
 
   beforeAll(async () => {
     const app = await createServer();
+    serverToken = (app as any).sessionToken;
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
         const addr = server.address();
@@ -139,7 +141,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
   it('POST /api/plan/execute rejects execution without explicit user approval with 403', async () => {
     const res = await fetch(`${baseUrl}/api/plan/execute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': serverToken },
       body: JSON.stringify({
         plan: { id: 'plan-test' },
         approved: false,
@@ -154,7 +156,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
   it('POST /api/plan/execute rejects missing plan with 400', async () => {
     const res = await fetch(`${baseUrl}/api/plan/execute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': serverToken },
       body: JSON.stringify({
         approved: true,
       }),
@@ -162,13 +164,13 @@ describe('ArchitectAI Web Server & Endpoints', () => {
 
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain('ImplementationPlan is required');
+    expect(json.error).toContain('runId is required for implementation plan execution');
   });
 
   it('POST /api/repair/execute rejects execution without explicit approval with 403', async () => {
     const res = await fetch(`${baseUrl}/api/repair/execute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': serverToken },
       body: JSON.stringify({
         approved: false,
       }),
@@ -223,6 +225,10 @@ describe('ArchitectAI Web Server & Endpoints', () => {
   });
 
   it('Milestone 6: Repository registration connects git repo to project', async () => {
+    // Get session token
+    const cfgRes = await fetch(`${baseUrl}/api/config`);
+    const { csrfToken } = await cfgRes.json();
+
     // Create project
     const pRes = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
@@ -231,10 +237,13 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     });
     const { project } = await pRes.json();
 
-    // Register current workspace root
+    // Register current workspace root with valid token
     const regRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
       body: JSON.stringify({ repoPath: process.cwd() }),
     });
 
@@ -317,5 +326,324 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     expect(json.healthy).toBe(true);
     expect(JSON.stringify(json)).not.toContain('sk-');
   });
+
+  it('Milestone 6: Security - Server enforces 127.0.0.1 loopback binding default', () => {
+    expect(DEFAULT_HOST).toBe('127.0.0.1');
+  });
+
+  it('Milestone 6: Security - Sensitive mutating endpoints mandate session security token', async () => {
+    const pRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Token Test Project' }),
+    });
+    const { project } = await pRes.json();
+
+    // 1. Missing token -> 403 Forbidden
+    const missingTokenRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repoPath: process.cwd() }),
+    });
+    expect(missingTokenRes.status).toBe(403);
+    const missingJson = await missingTokenRes.json();
+    expect(missingJson.error).toContain('Missing session security token');
+
+    // 2. Wrong token -> 403 Forbidden
+    const wrongTokenRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': 'invalid-token-12345',
+      },
+      body: JSON.stringify({ repoPath: process.cwd() }),
+    });
+    expect(wrongTokenRes.status).toBe(403);
+    const wrongJson = await wrongTokenRes.json();
+    expect(wrongJson.error).toContain('Invalid session security token');
+
+    // 3. Correct token -> 200 OK
+    const cfgRes = await fetch(`${baseUrl}/api/config`);
+    const { csrfToken } = await cfgRes.json();
+
+    const validTokenRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify({ repoPath: process.cwd() }),
+    });
+    expect(validTokenRes.status).toBe(200);
+    const validJson = await validTokenRes.json();
+    expect(validJson.success).toBe(true);
+  });
+
+  describe('Milestone 6: Execution must require a registered repository', () => {
+    it('A. run with registered repository -> compile succeeds', async () => {
+      const cfg = await (await fetch(`${baseUrl}/api/config`)).json();
+      const token = cfg.csrfToken;
+
+      const pRes = await fetch(`${baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Reg Repo Project' }),
+      });
+      const { project } = await pRes.json();
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+        body: JSON.stringify({ repoPath: process.cwd() }),
+      });
+
+      const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawIntent: 'Limit each authenticated user to 100 API requests per minute.',
+          declaredTechStack: ['Redis', 'Node.js'],
+        }),
+      });
+      const { runId, contract } = await runRes.json();
+
+      const compileRes = await fetch(`${baseUrl}/api/plan/compile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, contract }),
+      });
+      expect(compileRes.status).toBe(200);
+      const compileJson = await compileRes.json();
+      expect(compileJson.success).toBe(true);
+      expect(compileJson.plan).toBeDefined();
+    });
+
+    it('B. run without registered repository -> compile rejected', async () => {
+      const pRes = await fetch(`${baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Unregistered Repo Project' }),
+      });
+      const { project } = await pRes.json();
+
+      const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawIntent: 'Limit each authenticated user to 100 API requests per minute.',
+          declaredTechStack: ['Redis', 'Node.js'],
+        }),
+      });
+      const { runId, contract } = await runRes.json();
+
+      const compileRes = await fetch(`${baseUrl}/api/plan/compile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, contract }),
+      });
+      expect(compileRes.status).toBe(400);
+      const compileJson = await compileRes.json();
+      expect(compileJson.error).toContain('no registered repository');
+    });
+
+    it('C. crafted ImplementationPlan.repositoryPath pointing elsewhere -> ignored / overridden with registered repo', async () => {
+      const cfg = await (await fetch(`${baseUrl}/api/config`)).json();
+      const token = cfg.csrfToken;
+
+      const pRes = await fetch(`${baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Crafted Path Project' }),
+      });
+      const { project } = await pRes.json();
+
+      await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+        body: JSON.stringify({ repoPath: process.cwd() }),
+      });
+
+      const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawIntent: 'Limit each authenticated user to 100 API requests per minute.',
+          declaredTechStack: ['Redis', 'Node.js'],
+        }),
+      });
+      const { runId, contract } = await runRes.json();
+
+      const compileRes = await fetch(`${baseUrl}/api/plan/compile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, contract }),
+      });
+      const { plan } = await compileRes.json();
+
+      // Craft plan with unauthorized arbitrary repositoryPath
+      const maliciousPlan = {
+        ...plan,
+        repositoryPath: 'C:\\Windows\\System32\\unauthorized',
+      };
+
+      const execRes = await fetch(`${baseUrl}/api/plan/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+        body: JSON.stringify({
+          plan: maliciousPlan,
+          runId,
+          approved: true,
+          contract,
+        }),
+      });
+
+      expect(execRes.status).toBe(200);
+      const execJson = await execRes.json();
+      expect(execJson.success).toBe(true);
+      // Verify session recorded the real canonical repo, not the crafted path
+      const sessionRes = await fetch(`${baseUrl}/api/runs/${runId}`);
+      const sessionData = await sessionRes.json();
+      expect(sessionData.sessions[0].repositoryId).toBeDefined();
+    }, 90000);
+
+    it('D. run from Project A + submitted Project B ID -> rejects mismatch', async () => {
+      const cfg = await (await fetch(`${baseUrl}/api/config`)).json();
+      const token = cfg.csrfToken;
+
+      const pResA = await fetch(`${baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Project A' }),
+      });
+      const { project: projA } = await pResA.json();
+
+      const pResB = await fetch(`${baseUrl}/api/projects`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Project B' }),
+      });
+      const { project: projB } = await pResB.json();
+
+      await fetch(`${baseUrl}/api/projects/${projA.id}/repository`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+        body: JSON.stringify({ repoPath: process.cwd() }),
+      });
+
+      const runRes = await fetch(`${baseUrl}/api/projects/${projA.id}/runs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rawIntent: 'Limit each authenticated user to 100 API requests per minute.',
+          declaredTechStack: ['Redis', 'Node.js'],
+        }),
+      });
+      const { runId, contract } = await runRes.json();
+
+      const compileRes = await fetch(`${baseUrl}/api/plan/compile`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, contract, projectId: projB.id }),
+      });
+      expect(compileRes.status).toBe(400);
+      const compileJson = await compileRes.json();
+      expect(compileJson.error).toContain('Project mismatch');
+    });
+
+    it('E. arbitrary direct repoPath cannot reach execution without registered repo', async () => {
+      const cfg = await (await fetch(`${baseUrl}/api/config`)).json();
+      const token = cfg.csrfToken;
+
+      const execRes = await fetch(`${baseUrl}/api/plan/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+        body: JSON.stringify({
+          plan: {
+            id: 'plan_dummy',
+            contractId: 'contract_dummy',
+            repositoryPath: 'C:\\arbitrary\\path',
+            tasks: [],
+            summary: 'Dummy',
+            riskLevel: 'low',
+            createdAt: new Date().toISOString(),
+          },
+          runId: 'non_existent_run_id',
+          approved: true,
+        }),
+      });
+      expect(execRes.status).toBe(404);
+      const execJson = await execRes.json();
+      expect(execJson.error).toContain('not found');
+    });
+  });
+
+  it('Milestone 6: POST /api/sessions/:sessionId/recover enables user-driven crash recovery', async () => {
+    const cfg = await (await fetch(`${baseUrl}/api/config`)).json();
+    const token = cfg.csrfToken;
+
+    // Create project, repo, run
+    const pRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Recovery Test Project' }),
+    });
+    const { project } = await pRes.json();
+
+    await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+      body: JSON.stringify({ repoPath: process.cwd() }),
+    });
+
+    const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rawIntent: 'Limit each authenticated user to 100 API requests per minute.',
+        declaredTechStack: ['Redis', 'Node.js'],
+      }),
+    });
+    const { runId, contract } = await runRes.json();
+
+    const compileRes = await fetch(`${baseUrl}/api/plan/compile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runId, contract }),
+    });
+    const { plan } = await compileRes.json();
+
+    const execRes = await fetch(`${baseUrl}/api/plan/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+      body: JSON.stringify({
+        plan,
+        runId,
+        approved: true,
+        contract,
+      }),
+    });
+    const { sessionId } = await execRes.json();
+
+    // Recover session with action: 'retry'
+    const recoverRes = await fetch(`${baseUrl}/api/sessions/${sessionId}/recover`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
+      body: JSON.stringify({
+        action: 'retry',
+        approved: true,
+      }),
+    });
+
+    expect(recoverRes.status).toBe(200);
+    const recoverJson = await recoverRes.json();
+    expect(recoverJson.success).toBe(true);
+    expect(recoverJson.action).toBe('retry');
+    expect(recoverJson.nextRunState).toBe('READY_FOR_IMPLEMENTATION');
+
+    // Confirm run was reset to READY_FOR_IMPLEMENTATION in SQLite
+    const checkRunRes = await fetch(`${baseUrl}/api/runs/${runId}`);
+    const checkRunJson = await checkRunRes.json();
+    expect(checkRunJson.run.state).toBe('READY_FOR_IMPLEMENTATION');
+  }, 90000);
 });
 

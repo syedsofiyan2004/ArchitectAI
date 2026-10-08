@@ -41,6 +41,11 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
       browser = await chromium.launch();
       hasChromium = true;
     } catch (err) {
+      if (process.env.CI) {
+        throw new Error(
+          `[CI Failure] Playwright Chromium launch failed in CI: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
       console.warn('[E2E Test] Chromium launch failed, skipping browser execution:', err);
       hasChromium = false;
     }
@@ -64,7 +69,19 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
   });
 
   it('runs complete persistent lifecycle across browser reload and server restart', async () => {
-    if (!hasChromium || !browser) return;
+    if (!hasChromium || !browser) {
+      if (process.env.CI) {
+        throw new Error('[CI Failure] Chromium is not available in CI environment.');
+      }
+      return;
+    }
+
+    // Retrieve active session/CSRF token
+    const configRes = await fetch(`${baseUrl}/api/config`);
+    expect(configRes.status).toBe(200);
+    const configData = await configRes.json();
+    const csrfToken = configData.csrfToken;
+    expect(csrfToken).toBeDefined();
 
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
     const page = await context.newPage();
@@ -86,10 +103,13 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
     const { project } = await createProjectRes.json();
     expect(project.id).toBeDefined();
 
-    // 3. Register fixture Git repository
+    // 3. Register fixture Git repository (enforces mandatory session token)
     const regRepoRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
       body: JSON.stringify({
         repoPath: fixtureRepo.repoPath,
       }),
@@ -150,16 +170,20 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
       }),
     });
     expect(compilePlanRes.status).toBe(200);
-    const { plan } = await compilePlanRes.json();
+    const compileData = await compilePlanRes.json();
+    const plan = compileData.plan;
     expect(plan.id).toBeDefined();
 
-    // 9. Execute Implementation with explicit approval
+    // 9. Execute Implementation with vulnerable-agent to induce invariant verification failure
     const execRes = await fetch(`${baseUrl}/api/plan/execute`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
       body: JSON.stringify({
         plan,
-        agentId: 'deterministic-agent',
+        agentId: 'vulnerable-agent',
         approved: true,
         contract: runData.contract,
         runId,
@@ -168,16 +192,71 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
     });
     expect(execRes.status).toBe(200);
     const execData = await execRes.json();
-    expect(execData.success).toBe(true);
     expect(execData.sessionId).toBeDefined();
+    // Vulnerable agent passes native test but fails independent invariant verification
+    expect(execData.execution.verificationResult).toBeDefined();
+    expect(execData.execution.verificationResult.isVerified).toBe(false);
+    expect(execData.execution.verificationResult.overallStatus).toBe('FAILED');
 
-    // 10. Verify that diff patch artifact was persisted to bounded storage
+    // Verify run state in SQLite transitioned to VERIFICATION_FAILED
+    const runAfterFailRes = await fetch(`${baseUrl}/api/runs/${runId}`);
+    const runAfterFailData = await runAfterFailRes.json();
+    expect(runAfterFailData.run.state).toBe('VERIFICATION_FAILED');
+
+    // 10. Diagnose verification failure and compile bounded repair plan
+    const diagnoseRes = await fetch(`${baseUrl}/api/repair/diagnose`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contract: runData.contract,
+        plan,
+        context: execData.execution.repositoryContext || compileData.context,
+        verificationPlan: execData.execution.verificationPlan,
+        verificationRun: execData.execution.verificationResult,
+        diffReport: execData.execution.diffReport,
+        runId,
+      }),
+    });
+    expect(diagnoseRes.status).toBe(200);
+    const diagnoseData = await diagnoseRes.json();
+    expect(diagnoseData.diagnoses.length).toBeGreaterThan(0);
+    expect(diagnoseData.repairPlan).toBeDefined();
+
+    // 11. Execute autonomous repair loop with deterministic-agent
+    const repairRes = await fetch(`${baseUrl}/api/repair/execute`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-csrf-token': csrfToken,
+      },
+      body: JSON.stringify({
+        contract: runData.contract,
+        plan,
+        context: execData.execution.repositoryContext || compileData.context,
+        verificationPlan: execData.execution.verificationPlan,
+        verificationRun: execData.execution.verificationResult,
+        diagnoses: diagnoseData.diagnoses,
+        repairPlan: diagnoseData.repairPlan,
+        maxAttempts: 2,
+        agentId: 'deterministic-agent',
+        runId,
+        approved: true,
+      }),
+    });
+    expect(repairRes.status).toBe(200);
+    const repairData = await repairRes.json();
+    expect(repairData.success).toBe(true);
+    expect(repairData.repairResult.isRepaired).toBe(true);
+    expect(repairData.repairResult.finalVerificationResult.isVerified).toBe(true);
+    expect(repairData.repairResult.finalVerificationResult.overallStatus).toBe('VERIFIED');
+
+    // 12. Verify that diff patch artifact was persisted to bounded storage
     const artifactRes = await fetch(`${baseUrl}/api/runs/${runId}/artifacts`);
     const { artifacts } = await artifactRes.json();
     expect(artifacts.length).toBeGreaterThanOrEqual(1);
 
     // =======================================================
-    // 11. RESTART SERVER DEMONSTRATION
+    // 13. RESTART SERVER DEMONSTRATION
     // Stop server and launch a brand new Server instance on same SQLite db
     // =======================================================
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -193,18 +272,24 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
       });
     });
 
-    // 12. Reopen browser on new server URL and verify everything survived
+    // 14. Reopen browser on new server URL and verify everything survived in SQLite
     const checkRunRes = await fetch(`${baseUrl}/api/runs/${runId}`);
     expect(checkRunRes.status).toBe(200);
     const checkRunData = await checkRunRes.json();
 
-    await page.goto(`${baseUrl}/runs/${runId}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.finding-row-card', { timeout: 15000 });
-    expect(await page.textContent('.review-title')).toMatch(/\d+ engineering risk/i);
     expect(checkRunData.run.id).toBe(runId);
     expect(checkRunData.run.projectId).toBe(project.id);
+    expect(checkRunData.run.state).toBe('VERIFIED');
     expect(checkRunData.run.contract.id).toBe(runData.contract.id);
     expect(checkRunData.sessions.length).toBeGreaterThanOrEqual(1);
+
+    // Verify complete repair history survived restart
+    const session = checkRunData.sessions[0];
+    expect(session.repairRunResult).toBeDefined();
+    expect(session.repairRunResult.isRepaired).toBe(true);
+    expect(session.verificationRunResult).toBeDefined();
+    expect(session.verificationRunResult.isVerified).toBe(true);
+    expect(session.verificationRunResult.overallStatus).toBe('VERIFIED');
     expect(checkRunData.artifacts.length).toBeGreaterThanOrEqual(1);
 
     // Verify Project on restarted server
@@ -212,6 +297,11 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
     expect(checkProjRes.status).toBe(200);
     const checkProjData = await checkProjRes.json();
     expect(checkProjData.project.name).toBe('API Gateway Service');
+
+    // 15. Verify UI page reconstruction on restarted server
+    await page.goto(`${baseUrl}/runs/${runId}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.finding-row-card', { timeout: 15000 });
+    expect(await page.textContent('.review-title')).toMatch(/\d+ engineering risk/i);
 
     await page.close();
     await context.close();

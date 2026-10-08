@@ -189,7 +189,8 @@ export class RepairPolicyValidator {
       return new RegExp(`^${regexStr}$`).test(normalizedFile);
     }
 
-    return normalizedFile === normalizedPattern || normalizedFile.startsWith(`${normalizedPattern}/`);
+    const cleanPattern = normalizedPattern.endsWith('/') ? normalizedPattern.slice(0, -1) : normalizedPattern;
+    return normalizedFile === cleanPattern || normalizedFile.startsWith(`${cleanPattern}/`);
   }
 
   private async checkPackageJsonTampering(

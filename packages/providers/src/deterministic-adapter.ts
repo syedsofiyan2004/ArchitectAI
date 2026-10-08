@@ -60,7 +60,7 @@ const SCENARIO_CATALOG: Array<{
           WellKnownDimensions.SHARED_MUTABLE_STATE,
         ],
       },
-      relevantPatternIds: ['pattern-fixed-window-burst', 'pattern-unbounded-consumer-overflow'],
+      relevantPatternIds: ['pattern-fixed-window-burst'],
     },
   },
   // Demo B: Token Refresh Race
@@ -836,7 +836,38 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
       let isExecutable = true;
       let inconclusiveReason: string | undefined;
 
-      const selectedId = candidateRecipeMatches[0];
+      let selectedId = candidateRecipeMatches[0];
+      if (
+        invariantId.includes('burst') ||
+        invariantId.includes('fixed-window') ||
+        invariantId.includes('rate') ||
+        userMessage.includes('pattern-fixed-window-burst') ||
+        userMessage.includes('rolling window')
+      ) {
+        const rateRecipe = candidateRecipeMatches.find((r) => r === 'recipe-rolling-window-boundary-burst');
+        if (rateRecipe) selectedId = rateRecipe;
+      } else if (
+        invariantId.includes('idempotent') ||
+        invariantId.includes('payment') ||
+        userMessage.includes('pattern-duplicate-side-effect-retry')
+      ) {
+        const payRecipe = candidateRecipeMatches.find((r) => r === 'recipe-idempotent-mutation-retry');
+        if (payRecipe) selectedId = payRecipe;
+      } else if (
+        invariantId.includes('worker') ||
+        invariantId.includes('concurrency') ||
+        userMessage.includes('pattern-unbounded-consumer-overflow')
+      ) {
+        const workerRecipe = candidateRecipeMatches.find((r) => r === 'recipe-bounded-worker-concurrency');
+        if (workerRecipe) selectedId = workerRecipe;
+      } else if (
+        invariantId.includes('token') ||
+        invariantId.includes('refresh') ||
+        userMessage.includes('pattern-token-refresh-race')
+      ) {
+        const tokenRecipe = candidateRecipeMatches.find((r) => r === 'recipe-token-refresh-single-flight');
+        if (tokenRecipe) selectedId = tokenRecipe;
+      }
 
       if (selectedId === 'recipe-rolling-window-boundary-burst') {
         selectedRecipeId = 'recipe-rolling-window-boundary-burst';
@@ -1053,7 +1084,7 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
           'The target engineering invariant fundamentally conflicts with accepted architectural decisions and physical environment limits.';
         likelyFailureMechanism =
           'Architectural assumption violated: requirement cannot be satisfied within existing decision boundaries.';
-      } else if (invariantId.includes('rate')) {
+      } else if (invariantId.includes('rate') || invariantId.includes('burst') || invariantId.includes('window')) {
         likelyFailureMechanism =
           'Fixed-window counter resets allowance at discrete minute boundaries, allowing up to 2x burst across window boundaries. Needs sliding-window rolling enforcement.';
         affectedFiles = ['src/rate-limiter.ts'];

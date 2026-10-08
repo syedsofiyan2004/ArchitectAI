@@ -25,6 +25,9 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
       browser = await chromium.launch();
       hasChromium = true;
     } catch (err) {
+      if (process.env.CI || process.env.ARCHITECTAI_REQUIRE_BROWSER) {
+        throw new Error(`Playwright Chromium launch failed in CI environment: ${err}`);
+      }
       console.warn('[UX Test] Chromium launch failed, skipping:', err);
       hasChromium = false;
     }
@@ -39,8 +42,18 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
     }
   });
 
+  function ensureBrowserAvailable(): boolean {
+    if (!hasChromium || !browser) {
+      if (process.env.CI || process.env.ARCHITECTAI_REQUIRE_BROWSER) {
+        throw new Error('Playwright Chromium is required in CI but was not available.');
+      }
+      return false;
+    }
+    return true;
+  }
+
   it('starts cleanly on product home without auto-running scenarios', async () => {
-    if (!hasChromium || !browser) return;
+    if (!ensureBrowserAvailable() || !browser) return;
 
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -67,7 +80,7 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
   });
 
   it('walks through complete user journey from / to /new, review, evidence, architecture, verification, and implementation', async () => {
-    if (!hasChromium || !browser) return;
+    if (!ensureBrowserAvailable() || !browser) return;
 
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
@@ -140,7 +153,7 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
   });
 
   it('guarantees zero horizontal overflow and responsive layout on mobile (390x844)', async () => {
-    if (!hasChromium || !browser) return;
+    if (!ensureBrowserAvailable() || !browser) return;
 
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });

@@ -38,13 +38,13 @@ interface RunContext {
 
 export const ImplementationPage: React.FC = () => {
   const { run } = useOutletContext<RunContext>();
-  const { updateRun } = useRuns();
+  const { updateRun, csrfToken, activeRepository } = useRuns();
   const navigate = useNavigate();
 
   const contract = run.result!.contract;
 
   // Local state initialized from run if present
-  const [repoPath, setRepoPath] = useState<string>('.');
+  const [repoPath, setRepoPath] = useState<string>(activeRepository?.canonicalLocalPath || run.workspace?.repositoryPath || '.');
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string>('codex-cli');
   const [workspace, setWorkspace] = useState<RepositoryWorkspace | null>(run.workspace || null);
@@ -65,6 +65,41 @@ export const ImplementationPage: React.FC = () => {
   const [isRepairing, setIsRepairing] = useState<boolean>(false);
   const [repairResult, setRepairResult] = useState<RepairRunResult | null>(null);
   const [repairStatusMsg, setRepairStatusMsg] = useState<string>('');
+
+  // Hydrate persisted session, verification, and repair history from SQLite
+  useEffect(() => {
+    if (run.sessions && (run.sessions as any[]).length > 0) {
+      const latest = (run.sessions as any[])[0];
+      if (latest.repairRunResult && !repairResult) {
+        setRepairResult(latest.repairRunResult);
+      }
+      if (latest.verificationRunResult && !executionOutput) {
+        setExecutionOutput({
+          runId: run.id,
+          plan: plan || {
+            id: latest.implementationPlanId || 'plan',
+            contractId: contract.id,
+            repositoryPath: repoPath,
+            tasks: [],
+            summary: 'Persisted Implementation Plan',
+            riskLevel: 'medium',
+            createdAt: latest.createdAt,
+          },
+          tasksExecuted: latest.changedFiles?.length || 1,
+          taskResults: [],
+          diffReport: {
+            diff: '',
+            changedFiles: latest.changedFiles || [],
+            insertions: 0,
+            deletions: 0,
+            filesCount: latest.changedFiles?.length || 0,
+          },
+          isVerified: latest.repairRunResult?.isRepaired ?? (latest.verificationRunResult?.isVerified || latest.verificationRunResult?.overallStatus === 'PASSED'),
+          verificationRun: latest.verificationRunResult,
+        });
+      }
+    }
+  }, [run.sessions, repairResult, executionOutput, plan, contract.id, repoPath, run.id]);
 
   // Load available coding agents
   useEffect(() => {
@@ -90,8 +125,11 @@ export const ImplementationPage: React.FC = () => {
     try {
       const res = await fetch('/api/plan/compile', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contract, repoPath }),
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        },
+        body: JSON.stringify({ contract, runId: run.id }),
       });
 
       const data = await res.json();
@@ -126,13 +164,17 @@ export const ImplementationPage: React.FC = () => {
     try {
       const res = await fetch('/api/plan/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        },
         body: JSON.stringify({
           plan,
           agentId: selectedAgentId,
           approved: true,
           contract,
           context: run.context,
+          runId: run.id,
         }),
       });
 
@@ -192,7 +234,10 @@ export const ImplementationPage: React.FC = () => {
     try {
       const res = await fetch('/api/repair/execute', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        },
         body: JSON.stringify({
           contract,
           plan,
@@ -203,7 +248,7 @@ export const ImplementationPage: React.FC = () => {
           repairPlan,
           maxAttempts: 3,
           agentId: selectedAgentId,
-          runId: executionOutput.runId,
+          runId: run.id,
           approved: true,
         }),
       });

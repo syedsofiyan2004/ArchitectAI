@@ -50,6 +50,8 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+export const DEFAULT_HOST = '127.0.0.1';
+
 export interface ServerOptions {
   dbPath?: string;
   artifactsDir?: string;
@@ -130,6 +132,8 @@ export async function createServer(options: ServerOptions = {}) {
 
   // 7. Session-specific local API Token for Anti-CSRF
   const serverSessionToken = crypto.randomUUID();
+  (app as any).sessionToken = serverSessionToken;
+  app.locals.sessionToken = serverSessionToken;
 
   // 8. Security Middlewares: Restricted CORS and Origin Verification
   const allowedOrigins = [
@@ -163,12 +167,22 @@ export async function createServer(options: ServerOptions = {}) {
         }
       }
 
-      // Check session token on destructive execution / cleanup endpoints if caller provides it or from browser
-      const sensitivePaths = ['/api/plan/execute', '/api/repair/execute', '/api/worktrees/cleanup'];
-      if (sensitivePaths.some((p) => req.path.startsWith(p))) {
+      // Check session token on destructive execution, registration, and cleanup endpoints
+      const isSensitivePath =
+        req.path.startsWith('/api/plan/execute') ||
+        req.path.startsWith('/api/repair/execute') ||
+        req.path.startsWith('/api/worktrees/cleanup') ||
+        (req.path.startsWith('/api/projects/') && req.path.includes('/repository')) ||
+        (req.path.startsWith('/api/sessions/') && req.path.endsWith('/recover')) ||
+        (req.path.startsWith('/api/settings') && ['POST', 'PATCH', 'PUT'].includes(req.method)) ||
+        (req.path.startsWith('/api/agents/preferred') && req.method === 'POST');
+
+      if (isSensitivePath) {
         const tokenHeader = req.headers['x-architectai-token'] || req.headers['x-csrf-token'];
-        // In local automated tests, token is optional; if provided, must match
-        if (tokenHeader && tokenHeader !== serverSessionToken) {
+        if (!tokenHeader) {
+          return res.status(403).json({ error: 'Forbidden: Missing session security token.' });
+        }
+        if (tokenHeader !== serverSessionToken) {
           return res.status(403).json({ error: 'Forbidden: Invalid session security token.' });
         }
       }
@@ -798,22 +812,34 @@ export async function createServer(options: ServerOptions = {}) {
         });
       }
 
-      const envKey = process.env['ARCHITECTAI_API_KEY'];
-      if (!envKey || envKey.trim().length === 0) {
+      // Actually test remote provider with one tiny bounded ping request
+      try {
+        const testPromise = provider.generateText({
+          messages: [{ role: 'user', content: 'Respond with exactly OK' }],
+          maxTokens: 5,
+          temperature: 0,
+        });
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Provider request timed out after 5000ms.')), 5000)
+        );
+        const response = await Promise.race([testPromise, timeoutPromise]);
+        return res.json({
+          success: true,
+          healthy: true,
+          providerId: provider.id,
+          diagnostic: `Remote model provider responsive: "${response.content.trim().slice(0, 50)}"`,
+        });
+      } catch (checkErr: unknown) {
+        const rawMsg = checkErr instanceof Error ? checkErr.message : String(checkErr);
+        // Ensure no API keys or credentials are leaked
+        const safeMsg = rawMsg.replace(/Bearer\s+[A-Za-z0-9_\-\.]+/gi, 'Bearer [REDACTED]').slice(0, 200);
         return res.json({
           success: true,
           healthy: false,
           providerId: provider.id,
-          error: 'Credential missing: ARCHITECTAI_API_KEY environment variable is not configured.',
+          error: `Provider health check failed: ${safeMsg}`,
         });
       }
-
-      return res.json({
-        success: true,
-        healthy: true,
-        providerId: provider.id,
-        diagnostic: 'Remote model provider credentials configured and reachable.',
-      });
     } catch (err: unknown) {
       return res.status(500).json({
         success: false,
@@ -865,6 +891,87 @@ export async function createServer(options: ServerOptions = {}) {
     }
   });
 
+  // Interrupted Session Recovery API
+  app.post('/api/sessions/:sessionId/recover', async (req: Request, res: Response) => {
+    try {
+      const { sessionId } = req.params;
+      const { action, approved } = req.body;
+
+      if (!approved) {
+        return res.status(403).json({
+          error: 'Execution rejected: Explicit user approval is required to recover an interrupted session.',
+        });
+      }
+
+      if (!action || !['retry', 'cleanup'].includes(action)) {
+        return res.status(400).json({
+          error: "Invalid action. Supported recovery actions are 'retry' and 'cleanup'.",
+        });
+      }
+
+      const session = sessionStore.findById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: `Session '${sessionId}' not found.` });
+      }
+
+      const run = runStore.findById(session.runId);
+
+      if (action === 'retry') {
+        // Safely clean up previous worktree if recorded
+        if (session.worktreePath) {
+          await crashRecoveryService.cleanupRecordedWorktree(sessionId).catch(() => {});
+        }
+
+        // Mark session as INTERRUPTED
+        sessionStore.update(sessionId, {
+          status: 'INTERRUPTED',
+          completedAt: new Date().toISOString(),
+        });
+
+        // Reset run back to READY_FOR_IMPLEMENTATION
+        if (run) {
+          runStore.update(run.id, {
+            state: 'READY_FOR_IMPLEMENTATION',
+            error: undefined,
+          });
+        }
+
+        return res.json({
+          success: true,
+          action: 'retry',
+          sessionId,
+          runId: session.runId,
+          nextRunState: 'READY_FOR_IMPLEMENTATION',
+          message: 'Interrupted session cleared. Run reset to READY_FOR_IMPLEMENTATION for a fresh implementation attempt.',
+        });
+      }
+
+      if (action === 'cleanup') {
+        if (session.worktreePath) {
+          await crashRecoveryService.cleanupRecordedWorktree(sessionId).catch(() => {});
+        }
+
+        sessionStore.update(sessionId, {
+          status: 'ORPHANED',
+          completedAt: new Date().toISOString(),
+        });
+
+        return res.json({
+          success: true,
+          action: 'cleanup',
+          sessionId,
+          runId: session.runId,
+          message: 'Interrupted session worktree cleaned up.',
+        });
+      }
+    } catch (err: unknown) {
+      return res.status(500).json({
+        success: false,
+        error: err instanceof Error ? err.message : 'Session recovery failed.',
+      });
+    }
+  });
+
   // Repository Inspection
   app.post('/api/repo/inspect', async (req: Request, res: Response) => {
     try {
@@ -892,39 +999,47 @@ export async function createServer(options: ServerOptions = {}) {
   // Compile Implementation Plan (resolves registered canonical path and blocks cross-project tampering!)
   app.post('/api/plan/compile', async (req: Request, res: Response) => {
     try {
-      const { contract, repoPath, projectId, runId } = req.body;
-      if (!contract) {
+      const { contract, runId, projectId } = req.body;
+      if (!runId || typeof runId !== 'string' || runId.trim().length === 0) {
+        return res.status(400).json({ error: 'runId is required for implementation plan compilation.' });
+      }
+
+      const run = runStore.findById(runId.trim());
+      if (!run) {
+        return res.status(404).json({ error: `Architecture run '${runId}' not found.` });
+      }
+
+      if (projectId && projectId !== run.projectId) {
+        return res.status(400).json({
+          error: `Project mismatch: Run belongs to project '${run.projectId}', cannot override with '${projectId}'.`,
+        });
+      }
+
+      const project = projectStore.findById(run.projectId);
+      if (!project) {
+        return res.status(404).json({ error: `Project '${run.projectId}' not found.` });
+      }
+
+      const registeredRepo = repoStore.findByProjectId(project.id);
+      if (!registeredRepo) {
+        return res.status(400).json({
+          error: `Project '${project.name}' has no registered repository. Repository registration is required before implementation.`,
+        });
+      }
+
+      // Canonical local path resolved strictly server-side from registered repo
+      const targetPath = registeredRepo.canonicalLocalPath;
+
+      const effectiveContract = contract ? EngineeringContractSchema.parse(contract) : run.contract;
+      if (!effectiveContract) {
         return res.status(400).json({ error: 'EngineeringContract is required.' });
-      }
-      const validatedContract = EngineeringContractSchema.parse(contract);
-
-      // Resolve registered repository server-side
-      let targetPath: string = process.cwd();
-      let activeProjectId = projectId;
-
-      if (runId) {
-        const run = runStore.findById(runId);
-        if (run) {
-          activeProjectId = run.projectId;
-        }
-      }
-
-      if (activeProjectId) {
-        const registeredRepo = repoStore.findByProjectId(activeProjectId);
-        if (registeredRepo) {
-          targetPath = registeredRepo.canonicalLocalPath;
-        }
-      } else if (typeof repoPath === 'string' && repoPath.trim().length > 0) {
-        targetPath = repoPath.trim();
       }
 
       const workspace = await gitWorkspaceService.inspectRepository(targetPath);
-      const context = await contextBuilder.buildContext(validatedContract, workspace);
-      const plan = await taskCompiler.execute(validatedContract, context);
+      const context = await contextBuilder.buildContext(effectiveContract, workspace);
+      const plan = await taskCompiler.execute(effectiveContract, context);
 
-      if (runId) {
-        runStore.update(runId, { state: 'READY_FOR_IMPLEMENTATION' });
-      }
+      runStore.update(run.id, { state: 'READY_FOR_IMPLEMENTATION' });
 
       return res.json({
         success: true,
@@ -951,31 +1066,43 @@ export async function createServer(options: ServerOptions = {}) {
             'Execution rejected: Explicit user approval is strictly required before modifying files.',
         });
       }
+      if (!runId || typeof runId !== 'string' || runId.trim().length === 0) {
+        return res.status(400).json({ error: 'runId is required for implementation plan execution.' });
+      }
       if (!plan) {
         return res.status(400).json({ error: 'ImplementationPlan is required.' });
       }
 
+      const run = runStore.findById(runId.trim());
+      if (!run) {
+        return res.status(404).json({ error: `Architecture run '${runId}' not found.` });
+      }
+
+      if (projectId && projectId !== run.projectId) {
+        return res.status(400).json({
+          error: `Project mismatch: Run belongs to project '${run.projectId}', cannot override with '${projectId}'.`,
+        });
+      }
+
+      const project = projectStore.findById(run.projectId);
+      if (!project) {
+        return res.status(404).json({ error: `Project '${run.projectId}' not found.` });
+      }
+
+      const registeredRepo = repoStore.findByProjectId(project.id);
+      if (!registeredRepo) {
+        return res.status(400).json({
+          error: `Project '${project.name}' has no registered repository. Repository registration is required before execution.`,
+        });
+      }
+
+      // Canonical local path resolved strictly server-side
+      const resolvedRepoPath = registeredRepo.canonicalLocalPath;
+
       const validatedPlan = ImplementationPlanSchema.parse(plan);
-      const validatedContract = contract ? EngineeringContractSchema.parse(contract) : undefined;
-
-      // Cross-project check & server-side path resolution
-      let resolvedRepoPath = validatedPlan.repositoryPath;
-      let effectiveProjectId = projectId;
-      let effectiveRunId = runId || validatedPlan.id;
-
-      if (runId) {
-        const run = runStore.findById(runId);
-        if (run) {
-          effectiveProjectId = run.projectId;
-        }
-      }
-
-      if (effectiveProjectId) {
-        const registeredRepo = repoStore.findByProjectId(effectiveProjectId);
-        if (registeredRepo) {
-          resolvedRepoPath = registeredRepo.canonicalLocalPath;
-        }
-      }
+      // Enforce server-resolved registered path over client plan's repositoryPath
+      validatedPlan.repositoryPath = resolvedRepoPath;
+      const validatedContract = contract ? EngineeringContractSchema.parse(contract) : run.contract;
 
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
       const now = new Date().toISOString();
@@ -983,14 +1110,14 @@ export async function createServer(options: ServerOptions = {}) {
       // Record Implementation Session in SQLite
       sessionStore.create({
         id: sessionId,
-        runId: effectiveRunId,
-        projectId: effectiveProjectId || 'default_project',
-        repositoryId: repoStore.findByProjectId(effectiveProjectId || '')?.id || 'repo_local',
+        runId: run.id,
+        projectId: run.projectId,
+        repositoryId: registeredRepo.id,
         implementationPlanId: validatedPlan.id,
         codingAgent: agentId || 'deterministic-agent',
         originalHead: 'HEAD',
         originalBranch: 'main',
-        isolatedBranch: `architectai/${effectiveRunId}`,
+        isolatedBranch: `architectai/${run.id}`,
         changedFiles: [],
         nativeCheckSummaries: [],
         status: 'IMPLEMENTING',
@@ -998,12 +1125,10 @@ export async function createServer(options: ServerOptions = {}) {
         updatedAt: now,
       });
 
-      if (runId) {
-        runStore.updateState(runId, 'IMPLEMENTING');
-      }
+      runStore.updateState(run.id, 'IMPLEMENTING');
 
       const output = await planExecutor.execute(
-        { ...validatedPlan, repositoryPath: resolvedRepoPath },
+        validatedPlan,
         agentId,
         validatedContract,
         context,
@@ -1011,15 +1136,15 @@ export async function createServer(options: ServerOptions = {}) {
       );
 
       if (output.worktreeSession) {
-        activeWorktreeSessions.set(output.runId, output.worktreeSession);
+        activeWorktreeSessions.set(run.id, output.worktreeSession);
       }
 
       // Persist diff patch artifact if available
       if (output.diffReport?.diff) {
-        const artifactRes = artifactStorage.storeArtifact(effectiveRunId, 'changes.diff', output.diffReport.diff);
+        const artifactRes = artifactStorage.storeArtifact(run.id, 'changes.diff', output.diffReport.diff);
         artifactStore.create({
           id: `art_${Date.now()}`,
-          runId: effectiveRunId,
+          runId: run.id,
           sessionId,
           type: 'DIFF_PATCH',
           relativePath: artifactRes.relativePath,
@@ -1029,34 +1154,46 @@ export async function createServer(options: ServerOptions = {}) {
         });
       }
 
+      const verification = output.verificationRun;
+      const isVerified = verification?.isVerified ?? (verification?.overallStatus === 'PASSED');
+      const isFailed = verification ? (!verification.isVerified || verification.overallStatus === 'FAILED') : false;
+
       // Update session status in SQLite
-      const finalStatus = output.success ? 'COMPLETED' : 'FAILED';
+      const finalStatus = isVerified
+        ? 'COMPLETED'
+        : isFailed
+        ? 'FAILED'
+        : output.success
+        ? 'COMPLETED'
+        : 'FAILED';
+
       sessionStore.update(sessionId, {
         worktreePath: output.worktreeSession?.worktreePath,
-        isolatedBranch: output.worktreeSession?.branch || `architectai/${effectiveRunId}`,
+        isolatedBranch: output.worktreeSession?.branch || `architectai/${run.id}`,
         originalHead: output.worktreeSession?.originalHead || 'HEAD',
         originalBranch: output.worktreeSession?.originalBranch || 'main',
         changedFiles: output.diffReport?.changedFiles || [],
         nativeCheckSummaries: output.checksSummary ? [output.checksSummary] : [],
-        verificationRunResult: output.verificationResult,
+        verificationRunResult: verification,
         status: finalStatus,
         completedAt: new Date().toISOString(),
       });
 
-      if (runId) {
-        if (output.verificationResult?.overallVerdict === 'VERIFIED') {
-          runStore.updateState(runId, 'VERIFIED');
-        } else if (output.verificationResult?.overallVerdict === 'FAIL') {
-          runStore.updateState(runId, 'VERIFICATION_FAILED');
-        } else if (!output.success) {
-          runStore.updateState(runId, 'FAILED');
-        }
+      if (isVerified) {
+        runStore.updateState(run.id, 'VERIFIED');
+      } else if (isFailed) {
+        runStore.updateState(run.id, 'VERIFICATION_FAILED');
+      } else if (!output.success) {
+        runStore.updateState(run.id, 'FAILED');
       }
 
       return res.json({
         success: true,
         sessionId,
-        execution: output,
+        execution: {
+          ...output,
+          verificationResult: verification,
+        },
       });
     } catch (err: unknown) {
       return res.status(500).json({
@@ -1122,6 +1259,21 @@ export async function createServer(options: ServerOptions = {}) {
 
       if (runId) {
         runStore.update(runId, { state: 'REPAIR_PENDING' });
+        try {
+          const diagContent = JSON.stringify({ diagnoses, repairPlan }, null, 2);
+          const artRes = artifactStorage.storeArtifact(runId, 'repair-diagnosis.json', diagContent);
+          artifactStore.create({
+            id: `art_diag_${Date.now()}`,
+            runId,
+            type: 'EXECUTION_EVIDENCE',
+            relativePath: artRes.relativePath,
+            contentHash: artRes.contentHash,
+            sizeBytes: artRes.sizeBytes,
+            createdAt: new Date().toISOString(),
+          });
+        } catch {
+          // ignore artifact persistence errors if storage fails
+        }
       }
 
       return res.json({
@@ -1203,12 +1355,62 @@ export async function createServer(options: ServerOptions = {}) {
 
       if (runId) {
         activeWorktreeSessions.delete(runId);
-        if (repairResult.status === 'REPAIRED') {
-          runStore.update(runId, { state: 'VERIFIED' });
-        } else if (repairResult.status === 'ARCHITECTURE_REVIEW_REQUIRED') {
-          runStore.update(runId, { state: 'ESCALATED' });
+        const sessions = sessionStore.findByRunId(runId);
+        const latestSession = sessions[0];
+        const isRepaired = repairResult.isRepaired || repairResult.status === 'REPAIRED';
+        const finalStatus = isRepaired ? 'COMPLETED' : 'FAILED';
+        const now = new Date().toISOString();
+
+        if (latestSession) {
+          sessionStore.update(latestSession.id, {
+            repairRunResult: repairResult,
+            verificationRunResult: repairResult.finalVerificationResult || latestSession.verificationRunResult,
+            changedFiles: Array.from(
+              new Set([
+                ...latestSession.changedFiles,
+                ...repairResult.attempts.flatMap((a) => a.changedFiles),
+              ])
+            ),
+            status: finalStatus,
+            completedAt: now,
+          });
+        }
+
+        // Persist repair diff artifact if available
+        const lastAttempt = repairResult.attempts[repairResult.attempts.length - 1];
+        if (lastAttempt?.diffSummary) {
+          const artifactRes = artifactStorage.storeArtifact(
+            runId,
+            'repair.diff',
+            lastAttempt.diffSummary
+          );
+          artifactStore.create({
+            id: `art_repair_${Date.now()}`,
+            runId,
+            sessionId: latestSession?.id,
+            type: 'DIFF_PATCH',
+            relativePath: artifactRes.relativePath,
+            contentHash: artifactRes.contentHash,
+            sizeBytes: artifactRes.sizeBytes,
+            createdAt: now,
+          });
+        }
+
+        // Update run state to agree with persisted repair outcome
+        if (isRepaired) {
+          runStore.updateState(runId, 'VERIFIED');
+        } else if (
+          repairResult.status === 'ARCHITECTURE_REVIEW_REQUIRED' ||
+          repairResult.outcome === 'ARCHITECTURE_REVIEW_REQUIRED'
+        ) {
+          runStore.updateState(runId, 'ESCALATED');
+        } else if (
+          repairResult.outcome === 'MAX_ATTEMPTS_REACHED' ||
+          repairResult.outcome === 'NEEDS_HUMAN_REVIEW'
+        ) {
+          runStore.updateState(runId, 'VERIFICATION_FAILED');
         } else {
-          runStore.update(runId, { state: 'FAILED' });
+          runStore.updateState(runId, 'FAILED');
         }
       }
 
