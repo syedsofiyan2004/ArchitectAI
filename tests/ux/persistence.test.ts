@@ -38,7 +38,10 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
     });
 
     try {
-      browser = await chromium.launch();
+      browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
       hasChromium = true;
     } catch (err) {
       if (process.env.CI) {

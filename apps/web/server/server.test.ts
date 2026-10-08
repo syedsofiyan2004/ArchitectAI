@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createServer, DEFAULT_HOST } from './server.js';
 import type { Server } from 'node:http';
+import { createDemoFixtureRepo, type FixtureRepo } from '../../../packages/application/src/test-helpers/fixture-repos.js';
 
 describe('ArchitectAI Web Server & Endpoints', () => {
   let server: Server;
   let baseUrl: string;
   let serverToken: string;
+  let fixtureRepo: FixtureRepo;
 
   beforeAll(async () => {
+    fixtureRepo = createDemoFixtureRepo('rate-limiter');
     const app = await createServer();
     serverToken = (app as any).sessionToken;
     await new Promise<void>((resolve) => {
@@ -24,6 +27,9 @@ describe('ArchitectAI Web Server & Endpoints', () => {
   afterAll(async () => {
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    if (fixtureRepo) {
+      fixtureRepo.cleanup();
     }
   });
 
@@ -244,7 +250,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
         'Content-Type': 'application/json',
         'x-csrf-token': csrfToken,
       },
-      body: JSON.stringify({ repoPath: process.cwd() }),
+      body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
     });
 
     expect(regRes.status).toBe(200);
@@ -343,7 +349,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     const missingTokenRes = await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ repoPath: process.cwd() }),
+      body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
     });
     expect(missingTokenRes.status).toBe(403);
     const missingJson = await missingTokenRes.json();
@@ -356,7 +362,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
         'Content-Type': 'application/json',
         'x-csrf-token': 'invalid-token-12345',
       },
-      body: JSON.stringify({ repoPath: process.cwd() }),
+      body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
     });
     expect(wrongTokenRes.status).toBe(403);
     const wrongJson = await wrongTokenRes.json();
@@ -372,7 +378,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
         'Content-Type': 'application/json',
         'x-csrf-token': csrfToken,
       },
-      body: JSON.stringify({ repoPath: process.cwd() }),
+      body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
     });
     expect(validTokenRes.status).toBe(200);
     const validJson = await validTokenRes.json();
@@ -394,7 +400,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
       await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
-        body: JSON.stringify({ repoPath: process.cwd() }),
+        body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
       });
 
       const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
@@ -460,7 +466,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
       await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
-        body: JSON.stringify({ repoPath: process.cwd() }),
+        body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
       });
 
       const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
@@ -527,7 +533,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
       await fetch(`${baseUrl}/api/projects/${projA.id}/repository`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
-        body: JSON.stringify({ repoPath: process.cwd() }),
+        body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
       });
 
       const runRes = await fetch(`${baseUrl}/api/projects/${projA.id}/runs`, {
@@ -592,7 +598,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
-      body: JSON.stringify({ repoPath: process.cwd() }),
+      body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
     });
 
     const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {

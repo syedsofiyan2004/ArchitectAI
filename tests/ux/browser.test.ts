@@ -22,7 +22,10 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
     });
 
     try {
-      browser = await chromium.launch();
+      browser = await chromium.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      });
       hasChromium = true;
     } catch (err) {
       if (process.env.CI || process.env.ARCHITECTAI_REQUIRE_BROWSER) {
