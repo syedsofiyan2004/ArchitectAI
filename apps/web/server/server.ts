@@ -1374,6 +1374,13 @@ export async function createServer(options: ServerOptions = {}) {
           userActionRequired: 'Re-register repository with valid git root and commit.',
         });
       }
+      if (code === 'NATIVE_CHECK_TAMPERED' || code === 'COMMAND_FORBIDDEN') {
+        if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
+        return sendApiError(res, 403, code, safeMsg, {
+          recoverable: false,
+          userActionRequired: 'Review modified package.json scripts; tampering with test/build commands is forbidden.',
+        });
+      }
       if (code === 'SCOPE_VIOLATION') {
         if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
         return sendApiError(res, 403, 'SCOPE_VIOLATION', safeMsg, {

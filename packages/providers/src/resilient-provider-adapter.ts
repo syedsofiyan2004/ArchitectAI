@@ -61,6 +61,18 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
+ * Redacts known sensitive secrets (API keys, OAuth Bearer tokens, GitHub tokens)
+ * from provider diagnostic messages before throwing or logging errors.
+ */
+export function redactProviderDiagnostics(message: string): string {
+  if (!message) return '';
+  return message
+    .replace(/Bearer\s+[a-zA-Z0-9._~\-+/]+=*/gi, 'Bearer [REDACTED]')
+    .replace(/sk-[a-zA-Z0-9_\-]{8,}/gi, '[REDACTED]')
+    .replace(/gh[pousr]_[a-zA-Z0-9]{20,}/gi, '[REDACTED]');
+}
+
+/**
  * Race an async operation against a bounded timeout using AbortController.
  * If the timeout fires first, the abort signal is sent to the underlying fetch/request.
  * This provides REAL interruption rather than just discarding a late result.
@@ -155,8 +167,9 @@ export class ResilientProviderAdapter implements ProviderAdapter {
 
         // Never retry authentication failures
         if (is401) {
+          const safeMessage = redactProviderDiagnostics(rawMessage);
           const authErr = new Error(
-            `Provider authentication failed during '${operationName}': ${rawMessage.slice(0, 200)}`
+            `Provider authentication failed during '${operationName}': ${safeMessage.slice(0, 200)}`
           );
           (authErr as NodeJS.ErrnoException).code = 'PROVIDER_AUTH_FAILED';
           throw authErr;
@@ -195,8 +208,9 @@ export class ResilientProviderAdapter implements ProviderAdapter {
         }
 
         // Non-retryable or max retries reached — propagate
+        const safeMessage = redactProviderDiagnostics(rawMessage);
         const finalErr = new Error(
-          `Provider operation '${operationName}' failed after ${attempt} attempt(s): ${rawMessage.slice(0, 300)}`
+          `Provider operation '${operationName}' failed after ${attempt} attempt(s): ${safeMessage.slice(0, 300)}`
         );
         (finalErr as NodeJS.ErrnoException).code = is429 ? 'PROVIDER_RATE_LIMITED' : 'PROVIDER_FAILED';
         throw finalErr;

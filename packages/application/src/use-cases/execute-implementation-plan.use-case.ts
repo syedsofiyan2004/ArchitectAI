@@ -231,6 +231,7 @@ export class ExecuteImplementationPlanUseCase {
         options?.signal
       );
       const nativeChecksPassed = executionChecks.every((c) => c.passed);
+      const tamperedCheck = executionChecks.find((c) => c.tampered);
 
       // Step 4: Run independent ArchitectAI verification against the EXACT modified worktree
       let verificationPlan: VerificationPlan | undefined;
@@ -300,6 +301,9 @@ export class ExecuteImplementationPlanUseCase {
         status = 'FAILED';
         const timedOutTask = taskResults.find((r) => r.failureReason?.includes('timed out') || r.failureReason?.includes('TIMED_OUT'));
         failureCode = timedOutTask ? 'TIMED_OUT' : 'AGENT_FAILED';
+      } else if (tamperedCheck) {
+        status = 'FAILED';
+        failureCode = 'NATIVE_CHECK_TAMPERED';
       } else if (!nativeChecksPassed) {
         status = 'FAILED';
         failureCode = 'NATIVE_CHECK_FAILED';

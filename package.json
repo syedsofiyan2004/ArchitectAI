@@ -15,6 +15,7 @@
     "test": "vitest run",
     "test:arch": "vitest run tests/architecture",
     "cli:skeleton": "pnpm --filter @architectai/cli skeleton",
+    "codex:smoke": "tsx packages/application/src/codex-smoke.ts",
     "web:dev": "pnpm --filter @architectai/web dev",
     "web:build": "pnpm --filter @architectai/web build",
     "web:start": "pnpm --filter @architectai/web start"

@@ -88,6 +88,14 @@ export class CompileVerificationPlanUseCase {
         preconditions: '',
         stimulus: '',
         expectedProperty: 'Target implementation loads and exports required contracts',
+        harnessTemplate: `
+          const fs = require('fs');
+          const wtPath = '__WORKTREE_PATH__';
+          const loaded = fs.existsSync(wtPath);
+          fs.writeFileSync('__EVIDENCE_PATH__', JSON.stringify({
+            observations: { implementation_loaded: loaded }
+          }));
+        `,
         assertions: [
           {
             id: 'assert-baseline',

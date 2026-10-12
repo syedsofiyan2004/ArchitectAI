@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   OpenAICompatibleProviderAdapter,
   DeterministicDemoProviderAdapter,
+  ResilientProviderAdapter,
+  redactProviderDiagnostics,
 } from './index.js';
 import {
   RequirementDecomposition,
@@ -218,6 +220,80 @@ describe('Providers Layer', () => {
       ).rejects.toThrow('Provider HTTP 429');
 
       vi.unstubAllGlobals();
+    });
+  });
+
+  describe('ResilientProviderAdapter & Provider Secret Redaction', () => {
+    it('redactProviderDiagnostics scrubs sk- keys, Bearer tokens, and ghp_ tokens', () => {
+      const raw =
+        'Error at https://api.openai.com: 401 with Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.test and key sk-proj-1234567890abcdef123456 and token ghp_1234567890abcdef1234567890';
+      const scrubbed = redactProviderDiagnostics(raw);
+
+      expect(scrubbed).not.toContain('sk-proj-1234567890abcdef123456');
+      expect(scrubbed).not.toContain('eyJhbGciOiJIUzI1NiJ9.test');
+      expect(scrubbed).not.toContain('ghp_1234567890abcdef1234567890');
+      expect(scrubbed).toContain('Bearer [REDACTED]');
+      expect(scrubbed).toContain('[REDACTED]');
+    });
+
+    it('ResilientProviderAdapter redacts secrets from 401 authentication errors', async () => {
+      const leakyAdapter = {
+        id: 'leaky-auth',
+        name: 'Leaky Auth Adapter',
+        getCapabilities: () => ({ supportsStructuredOutput: false, maxContextTokens: 1000, supportsStreaming: false }),
+        generateText: async () => {
+          throw new Error('HTTP 401 Unauthorized: Invalid key sk-secret1234567890 and Bearer my-auth-token-999');
+        },
+        generateStructured: async () => {
+          throw new Error('HTTP 401 Unauthorized: Invalid key sk-secret1234567890');
+        },
+      };
+
+      const resilient = new ResilientProviderAdapter(leakyAdapter);
+
+      let caughtErr: Error | undefined;
+      try {
+        await resilient.generateText({ messages: [{ role: 'user', content: 'test' }] });
+      } catch (err: unknown) {
+        caughtErr = err as Error;
+      }
+
+      expect(caughtErr).toBeDefined();
+      expect(caughtErr!.message).not.toContain('sk-secret1234567890');
+      expect(caughtErr!.message).not.toContain('my-auth-token-999');
+      expect(caughtErr!.message).toContain('[REDACTED]');
+      expect(caughtErr!.message).toContain('Bearer [REDACTED]');
+    });
+
+    it('ResilientProviderAdapter redacts secrets from terminal failures (5xx or non-retryable)', async () => {
+      const leakyAdapter = {
+        id: 'leaky-error',
+        name: 'Leaky Error Adapter',
+        getCapabilities: () => ({ supportsStructuredOutput: false, maxContextTokens: 1000, supportsStreaming: false }),
+        generateText: async () => {
+          throw new Error('Fatal backend failure for user ghp_9876543210abcdef9876543210 and token sk-ant-123456789012');
+        },
+        generateStructured: async () => {
+          throw new Error('Fatal backend failure');
+        },
+      };
+
+      const resilient = new ResilientProviderAdapter(leakyAdapter, {
+        maxRetries5xx: 0,
+        maxRetriesNetwork: 0,
+      });
+
+      let caughtErr: Error | undefined;
+      try {
+        await resilient.generateText({ messages: [{ role: 'user', content: 'test' }] });
+      } catch (err: unknown) {
+        caughtErr = err as Error;
+      }
+
+      expect(caughtErr).toBeDefined();
+      expect(caughtErr!.message).not.toContain('ghp_9876543210abcdef9876543210');
+      expect(caughtErr!.message).not.toContain('sk-ant-123456789012');
+      expect(caughtErr!.message).toContain('[REDACTED]');
     });
   });
 });

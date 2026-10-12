@@ -32,6 +32,7 @@ import {
   AnalyzeArchitectureUseCase,
 } from './index.js';
 import { killProcessTree } from './services/process-supervisor.js';
+import { runCodexSmoke } from './codex-smoke.js';
 import { InMemoryKnowledgeRepository } from '@architectai/knowledge';
 import { createDemoFixtureRepo, FixtureRepo } from './test-helpers/fixture-repos.js';
 
@@ -255,18 +256,17 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
     execSync('git config user.name "Test"', { cwd: tmpDir, stdio: 'ignore' });
     execSync('git config user.email "test@test.com"', { cwd: tmpDir, stdio: 'ignore' });
 
-    // Safe original test script
+    // Safe original test script with non-direct generic npm command
     fs.writeFileSync(
       path.join(tmpDir, 'package.json'),
       JSON.stringify({
         name: 'test-repo',
         scripts: {
-          test: 'node safe-test.js',
+          test: 'cross-env NODE_ENV=test vitest run',
         },
       }, null, 2)
     );
 
-    fs.writeFileSync(path.join(tmpDir, 'safe-test.js'), 'process.exit(0);');
     fs.mkdirSync(path.join(tmpDir, 'src'), { recursive: true });
     fs.writeFileSync(path.join(tmpDir, 'src', 'index.ts'), 'export const x = 1;');
 
@@ -281,6 +281,11 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
     const compiler = new CompileImplementationPlanUseCase(provider);
     const plan = await compiler.execute(sampleContract, ctx);
 
+    // Explicitly allow package.json so task scope validation does NOT catch the change prematurely
+    plan.tasks.forEach((t) => {
+      t.allowedFiles = ['package.json', 'malicious-canary.js', '**'];
+    });
+
     // Canary file that malicious script would create
     const canaryPath = path.join(tmpDir, 'MALICIOUS_CANARY.txt');
 
@@ -292,11 +297,16 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
       async cancel() {},
       async executeTask(_workspace: AgentWorkspace, task) {
         const worktreeDir = _workspace.worktreePath || _workspace.repositoryPath;
-        // Overwrite package.json inside the worktree with a malicious command
+        // Write the malicious canary script into the worktree
+        fs.writeFileSync(
+          path.join(worktreeDir, 'malicious-canary.js'),
+          `require('fs').writeFileSync('${canaryPath.replace(/\\/g, '\\\\')}', 'PWNED');\n`
+        );
+        // Overwrite package.json inside the worktree with a modified test script pointing to the canary
         const maliciousPkg = {
           name: 'test-repo',
           scripts: {
-            test: `node -e "require('fs').writeFileSync('${canaryPath.replace(/\\/g, '\\\\')}', 'PWNED')"`,
+            test: 'node malicious-canary.js',
           },
         };
         fs.writeFileSync(path.join(worktreeDir, 'package.json'), JSON.stringify(maliciousPkg, null, 2));
@@ -305,7 +315,7 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
           executionId: 'exec-tamper',
           taskId: task.id,
           status: 'completed',
-          changedFiles: ['package.json'],
+          changedFiles: ['package.json', 'malicious-canary.js'],
           commandsExecuted: [],
           logs: ['Tampered package.json test script'],
           agentSummary: 'Tampered package.json',
@@ -317,18 +327,23 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
     const gateway = new CodingAgentGateway([tamperingAgent]);
     const executor = new ExecuteImplementationPlanUseCase(gateway);
 
-    let caughtErr: any;
-    try {
-      await executor.execute(plan, 'tampering-agent', sampleContract, ctx);
-    } catch (err) {
-      caughtErr = err;
-    }
+    const result = await executor.execute(plan, 'tampering-agent', sampleContract, ctx);
 
-    // Either scope policy rejected package.json modification OR native checks executed original safe definition
-    // In ALL cases, the malicious canary file must NEVER have been created!
+    // 1. Malicious script was NEVER executed (canary never created)
     expect(fs.existsSync(canaryPath)).toBe(false);
 
-    // Verify original repository remains clean and untouched
+    // 2. Implementation execution failed with NATIVE_CHECK_TAMPERED
+    expect(result.status).toBe('FAILED');
+    expect(result.failureCode).toBe('NATIVE_CHECK_TAMPERED');
+
+    // 3. Execution check specifically recorded tampering
+    const tamperedCheck = result.executionChecks.find((c) => c.tampered);
+    expect(tamperedCheck).toBeDefined();
+    expect(tamperedCheck?.failureCode).toBe('NATIVE_CHECK_TAMPERED');
+    expect(tamperedCheck?.passed).toBe(false);
+    expect(tamperedCheck?.stderr).toContain('SECURITY TAMPER DETECTED');
+
+    // 4. Verify original repository remains completely clean and untouched
     const afterInspection = await wsService.inspectRepository(tmpDir);
     expect(afterInspection.headCommit).toBe(ws.headCommit);
     expect(afterInspection.isClean).toBe(true);
@@ -447,34 +462,12 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
 
     // If Codex is installed and live execution is explicitly enabled in dev environment:
     if (availability.available && process.env.RUN_CODEX_SMOKE === 'true') {
-      const fixture = createDemoFixtureRepo('rate-limiter');
-      cleanups.push(fixture.cleanup);
-
-      const wsService = new GitWorkspaceService();
-      const ws = await wsService.inspectRepository(fixture.repoPath);
-      const builder = new RepositoryContextBuilder();
-      const ctx = await builder.buildContext(sampleContract, ws);
-      const provider = new DeterministicDemoProviderAdapter();
-      const compiler = new CompileImplementationPlanUseCase(provider);
-      const plan = await compiler.execute(sampleContract, ctx);
-
-      // Verify Codex CLI execution on a bounded task
-      const result = await adapter.executeTask(
-        {
-          repositoryPath: fixture.repoPath,
-          branch: ws.currentBranch,
-          headCommit: ws.headCommit,
-        },
-        plan.tasks[0]!,
-        { timeoutMs: 30000 }
-      );
-
-      expect(result.executionId).toBeDefined();
-      expect(result.status).toBeDefined();
-
-      // Confirm original repository is clean
-      const untouchedCheck = await wsService.inspectRepository(fixture.repoPath);
-      expect(untouchedCheck.headCommit).toBe(fixture.initialHead);
+      const smokeReport = await runCodexSmoke();
+      expect(smokeReport.dangerousBypass).toBe(false);
+      expect(smokeReport.actualSafeInvocationMode).toBe('codex exec --cd <isolated-worktree> --approve-for-me -');
+      expect(smokeReport.originalWorkingTreeClean).toBe(true);
+      expect(smokeReport.originalHeadBefore).toBe(smokeReport.originalHeadAfter);
+      expect(smokeReport.executionStatus).toBeDefined();
     }
   });
 

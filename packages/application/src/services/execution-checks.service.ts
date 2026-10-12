@@ -12,12 +12,14 @@ import { ProcessSupervisor } from './process-supervisor.js';
 export interface NativeCheckSpec {
   /** The script name as declared in package.json (e.g. "test", "build") */
   scriptName: string;
-  /** Package manager executable to invoke (e.g. "npm", "node") */
+  /** Package manager executable to invoke (e.g. "npm") */
   executable: string;
   /** Arguments to pass — always structured, NEVER shell-interpolated */
   args: string[];
   /** The original script command string as recorded before agent modification */
-  originalCommand?: string;
+  originalCommand: string;
+  /** Immutable relative manifest path within the repository (default: 'package.json') */
+  manifestPath: string;
   /** Timeout for this specific check in ms */
   timeoutMs?: number;
 }
@@ -30,6 +32,8 @@ export interface ExecutionCheckResult {
   stdout: string;
   stderr: string;
   durationMs: number;
+  tampered?: boolean;
+  failureCode?: 'NATIVE_CHECK_TAMPERED' | 'COMMAND_FORBIDDEN';
 }
 
 /** Priority-ordered script names to consider as native checks */
@@ -73,17 +77,12 @@ export class ExecutionChecksService {
     for (const name of PRIORITY_CHECK_NAMES) {
       if (scripts[name]) {
         const rawCmd = scripts[name].trim();
-        // If command is a direct node/vitest/jest command, extract executable & args directly
-        // so that even if agent mutates package.json, the original command definition executes
-        const parts = rawCmd.split(/\s+/);
-        const first = parts[0] || 'npm';
-        const isDirect = first === 'node' || first === 'vitest' || first === 'jest' || first === 'tsc';
-
         specs.push({
           scriptName: name,
-          executable: isDirect ? first : 'npm',
-          args: isDirect ? parts.slice(1) : ['run', name],
+          executable: 'npm',
+          args: ['run', name],
           originalCommand: rawCmd,
+          manifestPath: 'package.json',
           timeoutMs: DEFAULT_CHECK_TIMEOUT_MS,
         });
       }
@@ -95,7 +94,17 @@ export class ExecutionChecksService {
   /**
    * Executes the pre-snapshotted NativeCheckSpecs inside the given worktree directory.
    * Uses structured execFile-style spawn (no shell interpolation).
-   * Does NOT rediscover or re-read package.json — only executes what was snapshotted.
+   *
+   * BEFORE executing any package-manager script:
+   * - reads the worktree package.json (manifestPath);
+   * - mechanically verifies the script value in the worktree exactly matches originalCommand.
+   *
+   * If tampered with by the coding agent:
+   * - DO NOT execute the script;
+   * - returns structured failure NATIVE_CHECK_TAMPERED.
+   *
+   * For unchanged scripts:
+   * - executes npm run <name> safely because mechanical identity is proven.
    */
   async runSnapshotChecks(
     worktreeDir: string,
@@ -107,6 +116,45 @@ export class ExecutionChecksService {
     for (const spec of specs) {
       if (signal?.aborted) break;
 
+      // Anti-Tampering Verification Gate
+      const manifestFile = path.join(worktreeDir, spec.manifestPath || 'package.json');
+      let isTampered = false;
+      let currentScriptCommand: string | undefined;
+
+      if (!fs.existsSync(manifestFile)) {
+        isTampered = true;
+      } else {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(manifestFile, 'utf-8'));
+          const currentScripts = (parsed && typeof parsed.scripts === 'object' && parsed.scripts !== null)
+            ? (parsed.scripts as Record<string, string>)
+            : {};
+          currentScriptCommand = currentScripts[spec.scriptName]?.trim();
+          if (currentScriptCommand !== spec.originalCommand) {
+            isTampered = true;
+          }
+        } catch {
+          isTampered = true;
+        }
+      }
+
+      if (isTampered) {
+        // DO NOT EXECUTE THE SCRIPT.
+        results.push({
+          command: `${spec.executable} ${spec.args.join(' ')}`,
+          scriptName: spec.scriptName,
+          passed: false,
+          exitCode: 1,
+          stdout: '',
+          stderr: `SECURITY TAMPER DETECTED: Script '${spec.scriptName}' in ${spec.manifestPath} was modified by coding agent.\nPre-agent original: "${spec.originalCommand}"\nPost-agent modified: "${currentScriptCommand ?? '(missing)'}"\nExecution of modified package script is strictly forbidden.`,
+          durationMs: 0,
+          tampered: true,
+          failureCode: 'NATIVE_CHECK_TAMPERED',
+        });
+        continue;
+      }
+
+      // Script definition is mechanically proven identical: execute snapshotted spec safely
       const result = await this.supervisor.execute(spec.executable, spec.args, {
         cwd: worktreeDir,
         timeoutMs: spec.timeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS,
