@@ -33,6 +33,7 @@ export interface ExecuteRepairLoopInput {
   maxAttempts?: number;
   agentId?: string;
   cleanupWorktreeOnFinish?: boolean;
+  signal?: AbortSignal;
 }
 
 /**
@@ -228,8 +229,14 @@ export class ExecuteRepairLoopUseCase {
     let finalVerificationRun = input.initialVerificationRun;
     const attempts: RepairAttempt[] = [];
     let isRepaired = false;
+    let previousFailuresFingerprint: string | undefined;
+    let consecutiveIdenticalFailures = 0;
+    let stoppedEarlyForRepetition = false;
 
     for (let attemptNumber = 1; attemptNumber <= maxAttempts; attemptNumber++) {
+      if (input.signal?.aborted) {
+        break;
+      }
       const attemptStartTime = Date.now();
 
       // Step A: Create checkpoint in isolated worktree before attempt
@@ -415,6 +422,26 @@ export class ExecuteRepairLoopUseCase {
         isRepaired = true;
         break;
       }
+
+      // Failure Fingerprint check: detect repetitive ineffective repair attempts
+      const currentFailuresFingerprint = currentVerificationRun.caseResults
+        .filter((c) => c.verdict !== 'PASS')
+        .map((c) => `${c.caseId}:${c.targetInvariantId || ''}:${c.verdict}`)
+        .sort()
+        .join('|');
+
+      const isNoOp = changedFiles.length === 0 || diff.trim().length === 0;
+
+      if (previousFailuresFingerprint && previousFailuresFingerprint === currentFailuresFingerprint && isNoOp) {
+        consecutiveIdenticalFailures++;
+        if (consecutiveIdenticalFailures >= 2 && maxAttempts > 3) {
+          stoppedEarlyForRepetition = true;
+          break;
+        }
+      } else {
+        consecutiveIdenticalFailures = 1;
+      }
+      previousFailuresFingerprint = currentFailuresFingerprint;
     }
 
     // Determine final outcome
@@ -423,6 +450,12 @@ export class ExecuteRepairLoopUseCase {
 
     if (isRepaired) {
       outcome = 'REPAIRED';
+    } else if (input.signal?.aborted) {
+      outcome = 'NEEDS_HUMAN_REVIEW';
+      escalationReason = 'Repair loop was cancelled by user.';
+    } else if (stoppedEarlyForRepetition) {
+      outcome = 'NEEDS_HUMAN_REVIEW';
+      escalationReason = 'Repeated identical verification failure observed without material implementation diff. Stopping early for human review.';
     } else if (attempts.length >= maxAttempts) {
       outcome = 'MAX_ATTEMPTS_REACHED';
       escalationReason = 'Maximum repair attempts reached without satisfying all engineering invariants.';

@@ -27,11 +27,12 @@ export class ProductDatabase {
   }
 
   private initialize(): void {
-    // Enable foreign keys and WAL mode for reliability on disk
+    // Enable foreign keys, WAL mode, and busy timeout for concurrent robustness
     if (this.dbPath !== ':memory:') {
       this.db.exec('PRAGMA journal_mode = WAL;');
     }
     this.db.exec('PRAGMA foreign_keys = ON;');
+    this.db.exec('PRAGMA busy_timeout = 5000;');
     runMigrations(this.db);
   }
 

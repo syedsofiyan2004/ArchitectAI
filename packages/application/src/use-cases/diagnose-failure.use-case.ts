@@ -82,7 +82,7 @@ export class DiagnoseVerificationFailureUseCase {
     // Extract ground truth failed assertions and evidence
     const failedAssertions = failedCase.assertions.filter((a) => !a.passed);
     const primaryFailedAssertion = failedAssertions[0];
-    const availableEvidenceIds = new Set(failedCase.evidence.map((e) => e.id));
+    const availableEvidenceIds = new Set((failedCase.evidence || []).map((e) => e.id));
 
     // Expected & observed from actual measured software evidence
     const expectedMetric = primaryFailedAssertion?.expected ?? 'N/A';

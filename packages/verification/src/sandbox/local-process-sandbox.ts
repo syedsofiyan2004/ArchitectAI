@@ -1,9 +1,57 @@
-import { execFile } from 'node:child_process';
+import { execFile, execSync, ChildProcess } from 'node:child_process';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
 import {
   VerificationSandbox,
   SandboxExecutionOptions,
   SandboxExecutionResult,
 } from '../types.js';
+
+function killProcessTree(pid: number, child?: ChildProcess): void {
+  if (!pid || pid <= 0) return;
+
+  // Liveness check: if process is already dead, return immediately
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return;
+  }
+
+  const isWindows = os.platform() === 'win32';
+  if (isWindows) {
+    const sysRoot = process.env['SystemRoot'] || 'C:\\Windows';
+    const taskkillPath = `${sysRoot}\\System32\\taskkill.exe`;
+    const taskkillCmd = fs.existsSync(taskkillPath) ? taskkillPath : 'taskkill';
+    try {
+      execSync(`"${taskkillCmd}" /pid ${pid} /T /F`, { stdio: 'ignore', timeout: 2000 });
+    } catch {
+      // taskkill failed, proceed to child.kill
+    }
+  } else {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      try {
+        execSync(`pkill -KILL -P ${pid}`, { stdio: 'ignore', timeout: 2000 });
+      } catch {
+        // ignore
+      }
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (child) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // ignore
+    }
+  }
+}
 
 /**
  * LocalProcessSandbox executes verification commands in a local child process under
@@ -12,10 +60,9 @@ import {
  * NOTE: This does NOT provide container-grade or VM isolation (such as Linux cgroups,
  * namespaces, or OCI containers). It protects against accidental leakage and runaways by:
  * - Environment variable sanitation (stripping API tokens, secrets, cloud credentials)
- * - Hard process execution timeouts to prevent hangs or runaway tasks
+ * - Hard process execution timeouts with process-tree cleanup to prevent hangs or runaway tasks
  * - Bounded buffer limits for stdout/stderr
  * - Temporary filesystem artifact isolation outside target repositories
- * Full container isolation is recorded as a future infrastructure capability.
  */
 export class LocalProcessSandbox implements VerificationSandbox {
   readonly id = 'local-trusted-process-sandbox';
@@ -65,7 +112,10 @@ export class LocalProcessSandbox implements VerificationSandbox {
     }
 
     return new Promise<SandboxExecutionResult>((resolve) => {
-      execFile(
+      let timedOut = false;
+      let timer: NodeJS.Timeout | undefined;
+
+      const child = execFile(
         command,
         args,
         {
@@ -75,19 +125,31 @@ export class LocalProcessSandbox implements VerificationSandbox {
           env: sanitizedEnv,
         },
         (error, stdout, stderr) => {
+          if (timer) clearTimeout(timer);
           const durationMs = Date.now() - startTime;
-          const timedOut = Boolean(error && error.killed && error.signal === 'SIGTERM');
+          const isKilled = Boolean(error && (error.killed || timedOut));
           const exitCode = error ? (typeof error.code === 'number' ? error.code : 1) : 0;
+
+          if (isKilled && child.pid) {
+            killProcessTree(child.pid, child);
+          }
 
           resolve({
             exitCode,
             stdout: stdout ? stdout.toString() : '',
             stderr: stderr ? stderr.toString() : (error ? error.message : ''),
             durationMs,
-            timedOut,
+            timedOut: isKilled,
           });
         }
       );
+
+      timer = setTimeout(() => {
+        timedOut = true;
+        if (child.pid) {
+          killProcessTree(child.pid, child);
+        }
+      }, timeoutMs);
     });
   }
 }

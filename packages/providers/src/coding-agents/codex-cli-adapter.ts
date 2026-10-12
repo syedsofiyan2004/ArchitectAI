@@ -1,5 +1,7 @@
-import { execFile, ChildProcess } from 'node:child_process';
+import { execFile, execSync, ChildProcess } from 'node:child_process';
 import { promisify } from 'node:util';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
 import {
   ImplementationTask,
   RepairTask,
@@ -14,11 +16,62 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+export interface CodexAdapterOptions {
+  allowDangerousSandboxBypass?: boolean;
+  timeoutMs?: number;
+  maxBufferBytes?: number;
+}
+
+function killProcessTree(pid: number, child?: ChildProcess): void {
+  if (!pid || pid <= 0) return;
+
+  const isWindows = os.platform() === 'win32';
+  if (isWindows) {
+    const sysRoot = process.env['SystemRoot'] || 'C:\\Windows';
+    const taskkillPath = `${sysRoot}\\System32\\taskkill.exe`;
+    const taskkillCmd = fs.existsSync(taskkillPath) ? taskkillPath : 'taskkill';
+    try {
+      execSync(`"${taskkillCmd}" /pid ${pid} /T /F`, { stdio: 'ignore' });
+    } catch {
+      try {
+        execSync(`powershell -NoProfile -Command "Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue"`, { stdio: 'ignore' });
+      } catch {
+        // ignore
+      }
+    }
+  } else {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      try {
+        execSync(`pkill -KILL -P ${pid}`, { stdio: 'ignore' });
+      } catch {
+        // ignore
+      }
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  if (child) {
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export class CodexCliAgentAdapter implements CodingAgentAdapter {
   readonly id = 'codex-cli';
   readonly name = 'Codex CLI';
 
   private activeProcesses = new Map<string, ChildProcess>();
+
+  constructor(private readonly options: CodexAdapterOptions = {}) {}
 
   async detect(): Promise<AgentAvailability> {
     try {
@@ -44,50 +97,61 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
     const targetDir = workspace.worktreePath || workspace.repositoryPath;
     const startTime = Date.now();
     const taskTitle = 'title' in task ? task.title : task.id;
+    const timeoutMs = this.options.timeoutMs ?? 180000; // 3 minutes
+    const maxBufferBytes = this.options.maxBufferBytes ?? 1024 * 1024; // 1 MB
 
     // Construct bounded prompt strictly adhering to task discipline
     const prompt = this.buildBoundedTaskPrompt(task);
 
+    const useDangerousBypass = Boolean(this.options.allowDangerousSandboxBypass);
+    const sandboxModeLabel = useDangerousBypass
+      ? 'DANGEROUS BYPASS (--dangerously-bypass-approvals-and-sandbox)'
+      : 'SAFE WORKSPACE SANDBOX (--sandbox workspace-write --approve-for-me)';
+
     const logs: string[] = [
       `[ArchitectAI Gateway] Starting execution ${executionId} on worktree: ${targetDir}`,
       `[ArchitectAI Gateway] Task: ${task.id} — ${taskTitle}`,
+      `[ArchitectAI Gateway] Codex Sandbox Policy: ${sandboxModeLabel}`,
       `[ArchitectAI Gateway] Allowed files: ${task.allowedFiles.join(', ') || 'Any non-excluded'}`,
     ];
 
     try {
-      // Execute codex exec non-interactively
-      // We pass instructions via prompt argument or stdin
-      const child = execFile(
-        'codex',
-        [
-          'exec',
-          '--cd',
-          targetDir,
-          '--dangerously-bypass-approvals-and-sandbox',
-          prompt,
-        ],
-        {
-          cwd: targetDir,
-          timeout: 120000, // 2 minutes max per task
-          maxBuffer: 10 * 1024 * 1024,
-        }
-      );
+      // Assemble codex exec arguments based on configured safety policy
+      const codexArgs = ['exec', '--cd', targetDir];
+
+      if (useDangerousBypass) {
+        codexArgs.push('--dangerously-bypass-approvals-and-sandbox');
+      } else {
+        codexArgs.push('--sandbox', 'workspace-write', '--approve-for-me');
+      }
+
+      codexArgs.push(prompt);
+
+      const child = execFile('codex', codexArgs, {
+        cwd: targetDir,
+        timeout: timeoutMs,
+        maxBuffer: maxBufferBytes,
+      });
 
       this.activeProcesses.set(executionId, child);
 
-      const stdoutChunks: string[] = [];
-      const stderrChunks: string[] = [];
+      let totalStdoutBytes = 0;
+      let totalStderrBytes = 0;
 
       child.stdout?.on('data', (data) => {
         const text = data.toString();
-        stdoutChunks.push(text);
-        logs.push(`[codex stdout] ${text.trim()}`);
+        totalStdoutBytes += Buffer.byteLength(text, 'utf-8');
+        if (totalStdoutBytes <= maxBufferBytes) {
+          logs.push(`[codex stdout] ${text.trim()}`);
+        }
       });
 
       child.stderr?.on('data', (data) => {
         const text = data.toString();
-        stderrChunks.push(text);
-        logs.push(`[codex stderr] ${text.trim()}`);
+        totalStderrBytes += Buffer.byteLength(text, 'utf-8');
+        if (totalStderrBytes <= maxBufferBytes) {
+          logs.push(`[codex stderr] ${text.trim()}`);
+        }
       });
 
       await new Promise<void>((resolve, reject) => {
@@ -145,56 +209,41 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
 
   async cancel(executionId: string): Promise<void> {
     const proc = this.activeProcesses.get(executionId);
-    if (proc) {
-      proc.kill('SIGTERM');
+    if (proc && proc.pid) {
+      killProcessTree(proc.pid, proc);
       this.activeProcesses.delete(executionId);
     }
   }
 
   private buildBoundedTaskPrompt(task: ImplementationTask | RepairTask): string {
-    const isRepair = 'targetInvariantIds' in task;
-    const requirements = isRepair ? task.repairRequirements : task.requirements;
-    const sourceInvariants = isRepair ? task.targetInvariantIds : task.sourceInvariantIds;
-    const sourceConcerns = isRepair ? [] : task.sourceConcernIds;
-    const sourceDecisions = isRepair ? [] : task.sourceDecisionIds;
-    const evidenceSummary = isRepair && task.evidenceReferences.length > 0
-      ? [`- Measured Evidence References: ${task.evidenceReferences.join(', ')}`]
-      : [];
+    const title = 'title' in task ? task.title : task.id;
+    const requirements = 'requirements' in task ? task.requirements : [task.objective];
+    const acceptance = 'acceptanceCriteria' in task ? task.acceptanceCriteria : ['Pass verification'];
 
     return [
-      `# ArchitectAI Bounded ${isRepair ? 'Repair' : 'Implementation'} Task: ${task.id}`,
-      `Objective: ${task.objective}`,
+      `TASK: ${task.id} — ${title}`,
+      `OBJECTIVE: ${task.objective}`,
       '',
-      '## Architectural Traceability',
-      ...(sourceConcerns.length > 0 ? [`- Source Concerns: ${sourceConcerns.join(', ')}`] : []),
-      ...(sourceDecisions.length > 0 ? [`- Source Decisions: ${sourceDecisions.join(', ')}`] : []),
-      `- Target Invariants: ${sourceInvariants.join(', ') || 'N/A'}`,
-      ...evidenceSummary,
+      'REQUIREMENTS:',
+      ...requirements.map((r: string) => `- ${r}`),
       '',
-      '## Scope Boundaries',
-      `- Files Allowed to Modify: ${task.allowedFiles.join(', ') || 'None specified (stay bounded)'}`,
-      `- Files EXCLUDED from Modification: ${task.excludedFiles.join(', ') || 'Do not modify unrelated code or package lockfiles without permission'}`,
+      'ACCEPTANCE CRITERIA:',
+      ...acceptance.map((a: string) => `- ${a}`),
       '',
-      '## Requirements',
-      ...requirements.map((r, i) => `${i + 1}. ${r}`),
+      `ALLOWED FILES: ${task.allowedFiles.join(', ') || 'Any relevant source files'}`,
+      `EXCLUDED FILES: ${task.excludedFiles.join(', ') || 'Tests, CI workflows, and package configs must not be weakened.'}`,
       '',
-      '## Acceptance Criteria',
-      ...task.acceptanceCriteria.map((a) => `- [ ] ${a}`),
-      '',
-      '## Operational Instructions',
-      '1. Implement ONLY what is requested in this bounded task.',
-      '2. Do NOT redesign the architecture or change public API contracts outside scope.',
-      '3. Ensure existing tests pass and do NOT tamper with test files or verification configs.',
+      'INSTRUCTIONS: Modify the codebase inside the current working directory to fulfill the objective and acceptance criteria. Do not delete or weaken existing test suites.',
     ].join('\n');
   }
 
-  private async getChangedFiles(dir: string): Promise<string[]> {
+  private async getChangedFiles(targetDir: string): Promise<string[]> {
     try {
-      const { stdout } = await execFileAsync('git', ['-C', dir, 'status', '--porcelain']);
+      const { stdout } = await execFileAsync('git', ['status', '--porcelain'], { cwd: targetDir });
       return stdout
         .split(/\r?\n/)
         .map((line) => line.trim())
-        .filter((line) => line.length > 3)
+        .filter((line) => line.length > 0)
         .map((line) => line.slice(3).trim());
     } catch {
       return [];

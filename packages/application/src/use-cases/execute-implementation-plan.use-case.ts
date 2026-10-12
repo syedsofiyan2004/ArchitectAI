@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import {
   ImplementationPlan,
   ImplementationTask,
@@ -6,15 +7,19 @@ import {
   RepositoryContext,
   VerificationPlan,
   VerificationRunResult,
+  ProductFailureCode,
 } from '@architectai/domain';
 import { CodingAgentGateway } from '@architectai/providers';
 import { GitIsolationService, GitDiffReport, IsolatedWorktreeSession } from '../services/git-isolation.service.js';
 import { ExecutionChecksService, ExecutionCheckResult } from '../services/execution-checks.service.js';
 import { CompileVerificationPlanUseCase } from './compile-verification-plan.use-case.js';
 import { VerifyImplementationUseCase } from './verify-implementation.use-case.js';
+import { GitWorkspaceService } from '../services/git-workspace.service.js';
 
 export interface PlanExecutionOptions {
   preserveWorktreeOnFailure?: boolean;
+  allowDirtyRepo?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface PlanExecutionOutput {
@@ -29,6 +34,7 @@ export interface PlanExecutionOutput {
   originalBranchUntouched: boolean;
   taskResults: AgentExecutionResult[];
   executionChecks: ExecutionCheckResult[];
+  nativeChecksPassed: boolean;
   verificationPlan?: VerificationPlan;
   verificationRun?: VerificationRunResult;
   diffReport: GitDiffReport;
@@ -36,6 +42,8 @@ export interface PlanExecutionOutput {
   isVerified: boolean;
   worktreeSession?: IsolatedWorktreeSession;
   executedAt: string;
+  status: 'COMPLETED' | 'FAILED' | 'CANCELLED';
+  failureCode?: ProductFailureCode;
 }
 
 export class ExecuteImplementationPlanUseCase {
@@ -44,7 +52,8 @@ export class ExecuteImplementationPlanUseCase {
     private readonly gitIsolation: GitIsolationService = new GitIsolationService(),
     private readonly executionChecks: ExecutionChecksService = new ExecutionChecksService(),
     private readonly planCompiler: CompileVerificationPlanUseCase = new CompileVerificationPlanUseCase(),
-    private readonly verifier: VerifyImplementationUseCase = new VerifyImplementationUseCase()
+    private readonly verifier: VerifyImplementationUseCase = new VerifyImplementationUseCase(),
+    private readonly gitWorkspace: GitWorkspaceService = new GitWorkspaceService()
   ) {}
 
   async execute(
@@ -56,25 +65,71 @@ export class ExecuteImplementationPlanUseCase {
   ): Promise<PlanExecutionOutput> {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 
-    // Select coding agent
+    // Gate 0: Immediate cancellation check
+    if (options?.signal?.aborted) {
+      const err = new Error('Execution was cancelled by user prior to starting.');
+      (err as any).code = 'USER_CANCELLED';
+      throw err;
+    }
+
+    // Gate 1: Revalidate repository existence and identity (Section 10 & 11)
+    const identityCheck = await this.gitWorkspace.verifyRepositoryIdentity(
+      plan.repositoryPath,
+      plan.repositoryFingerprint?.initialCommit,
+      plan.repositoryFingerprint?.gitRoot
+    );
+
+    if (!identityCheck.valid) {
+      const err = new Error(identityCheck.reason || 'Repository unavailable or identity mismatch');
+      (err as any).code = identityCheck.failureCode || 'REPOSITORY_UNAVAILABLE';
+      throw err;
+    }
+
+    // Gate 2: Repository Fingerprint & Dirty State Verification (Section 7, 8, 9)
+    if (plan.repositoryFingerprint) {
+      const currentFp = await this.gitWorkspace.computeFingerprint(plan.repositoryPath);
+
+      // Check for HEAD divergence
+      if (currentFp.headCommit !== plan.repositoryFingerprint.headCommit) {
+        const err = new Error(
+          `Repository HEAD has changed (plan compiled at commit ${plan.repositoryFingerprint.headCommit.slice(0, 8)}, current HEAD is ${currentFp.headCommit.slice(0, 8)}). Please recompile implementation plan.`
+        );
+        (err as any).code = 'REPOSITORY_CHANGED';
+        throw err;
+      }
+
+      // Check for dirty working tree policy
+      if (!currentFp.isClean && !options?.allowDirtyRepo) {
+        const err = new Error(
+          `Your working tree contains local uncommitted changes (${currentFp.dirtyFilesCount} modified files). ArchitectAI executes strictly from HEAD and these uncommitted changes are not included. Please commit or stash, or acknowledge dirty execution.`
+        );
+        (err as any).code = 'REPOSITORY_DIRTY';
+        throw err;
+      }
+    }
+
+    // Gate 3: Select coding agent
     const availableAgents = await this.agentGateway.listAvailableAgents();
     let agentEntry = requestedAgentId
       ? availableAgents.find((a) => a.adapter.id === requestedAgentId)
       : availableAgents.find((a) => a.availability.available);
 
     if (!agentEntry) {
-      // Fallback to first registered adapter
       agentEntry = availableAgents[0];
     }
 
     if (!agentEntry) {
-      throw new Error('No coding agent adapters registered in gateway.');
+      const err = new Error('No coding agent adapters registered in gateway.');
+      (err as any).code = 'AGENT_UNAVAILABLE';
+      throw err;
     }
 
     if (!agentEntry.availability.available) {
-      throw new Error(
+      const err = new Error(
         `Selected coding agent '${agentEntry.adapter.name}' is unavailable: ${agentEntry.availability.reason || 'Not detected'}`
       );
+      (err as any).code = 'AGENT_UNAVAILABLE';
+      throw err;
     }
 
     const adapter = agentEntry.adapter;
@@ -91,6 +146,12 @@ export class ExecuteImplementationPlanUseCase {
     try {
       // Step 2: Execute tasks in dependency order
       for (const task of orderedTasks) {
+        if (options?.signal?.aborted) {
+          const err = new Error('Execution was cancelled by user during task execution.');
+          (err as any).code = 'USER_CANCELLED';
+          throw err;
+        }
+
         task.status = 'in_progress';
 
         const result = await adapter.executeTask(
@@ -103,26 +164,60 @@ export class ExecuteImplementationPlanUseCase {
           task
         );
 
+        // Scope verification: agent must never modify files outside worktree or outside allowedFiles (Section 22)
+        for (const modifiedFile of result.changedFiles) {
+          const resolvedModified = path.resolve(worktreeSession.worktreePath, modifiedFile);
+          if (!resolvedModified.startsWith(path.resolve(worktreeSession.worktreePath))) {
+            const err = new Error(`Task ${task.id} modified file outside worktree boundary: ${modifiedFile}`);
+            (err as any).code = 'SCOPE_VIOLATION';
+            throw err;
+          }
+
+          if (task.allowedFiles && task.allowedFiles.length > 0) {
+            const normalized = modifiedFile.replace(/\\/g, '/').toLowerCase();
+            const isAllowed = task.allowedFiles.some((pat) => {
+              const normPat = pat.replace(/\\/g, '/').toLowerCase();
+              if (normPat === '*' || normPat === '**') return true;
+              if (normPat.endsWith('/**')) {
+                const dirPrefix = normPat.slice(0, -3);
+                return normalized.startsWith(dirPrefix + '/') || normalized === dirPrefix;
+              }
+              if (normPat.startsWith('*.')) {
+                return normalized.endsWith(normPat.slice(1));
+              }
+              if (normPat.endsWith('/*')) {
+                const dir = normPat.slice(0, -2);
+                return path.dirname(normalized).replace(/\\/g, '/') === dir;
+              }
+              return normalized === normPat || normalized.startsWith(normPat + '/');
+            });
+            if (!isAllowed) {
+              const err = new Error(`Task ${task.id} modified file '${modifiedFile}' which is not in allowedFiles.`);
+              (err as any).code = 'SCOPE_VIOLATION';
+              throw err;
+            }
+          }
+        }
+
         taskResults.push(result);
         task.status = result.status === 'completed' ? 'completed' : 'failed';
 
         if (result.status !== 'completed') {
-          // If task failed, stop remaining dependent tasks
           break;
         }
       }
 
-      // Step 3: Run repository-native build/test checks inside worktree
+      // Step 3: Run repository-native build/test checks inside worktree (Section 23)
       const executionChecks = await this.executionChecks.runDiscoveredChecks(
         worktreeSession.worktreePath
       );
+      const nativeChecksPassed = executionChecks.every((c) => c.passed);
 
       // Step 4: Run independent ArchitectAI verification against the EXACT modified worktree
       let verificationPlan: VerificationPlan | undefined;
       let verificationRun: VerificationRunResult | undefined;
 
       if (contract) {
-        // Compile adversarial verification plan post-implementation
         const emptyContext: RepositoryContext = context || {
           repositoryPath: plan.repositoryPath,
           relevantFiles: [],
@@ -132,6 +227,9 @@ export class ExecuteImplementationPlanUseCase {
           existingTests: [],
           implementationObservations: [],
           unresolvedQuestions: [],
+          filesInspected: 0,
+          filesOmitted: 0,
+          contextBytes: 0,
         };
 
         verificationPlan = await this.planCompiler.execute(
@@ -176,6 +274,24 @@ export class ExecuteImplementationPlanUseCase {
       const allTasksCompleted = taskResults.every((r) => r.status === 'completed');
       const isVerified = verificationRun ? verificationRun.isVerified : false;
 
+      let status: 'COMPLETED' | 'FAILED' | 'CANCELLED' = 'COMPLETED';
+      let failureCode: ProductFailureCode | undefined;
+
+      if (!allTasksCompleted) {
+        status = 'FAILED';
+        failureCode = 'AGENT_FAILED';
+      } else if (!nativeChecksPassed) {
+        status = 'FAILED';
+        failureCode = 'NATIVE_CHECK_FAILED';
+      } else if (verificationRun && !verificationRun.isVerified) {
+        status = 'FAILED';
+        failureCode = verificationRun.overallStatus === 'INCONCLUSIVE'
+          ? 'VERIFICATION_INCONCLUSIVE'
+          : verificationRun.overallStatus === 'ERROR'
+          ? 'VERIFICATION_ERROR'
+          : 'VERIFICATION_FAILED';
+      }
+
       return {
         plan,
         contract,
@@ -188,6 +304,7 @@ export class ExecuteImplementationPlanUseCase {
         originalBranchUntouched: verification.untouched,
         taskResults,
         executionChecks,
+        nativeChecksPassed,
         verificationPlan,
         verificationRun,
         diffReport,
@@ -195,8 +312,10 @@ export class ExecuteImplementationPlanUseCase {
         isVerified,
         worktreeSession: shouldPreserve ? worktreeSession : undefined,
         executedAt: new Date().toISOString(),
+        status,
+        failureCode,
       };
-    } catch (err) {
+    } catch (err: unknown) {
       // Always cleanup worktree even on error
       await this.gitIsolation.cleanupWorktree(
         plan.repositoryPath,

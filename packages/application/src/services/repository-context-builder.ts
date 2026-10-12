@@ -6,17 +6,35 @@ import {
   RepositoryContext,
   RepositoryContextSchema,
 } from '@architectai/domain';
-import { isSensitivePath } from './git-workspace.service.js';
+import {
+  isSensitivePath,
+  isBinaryOrHugeFile,
+  isSafeSymlink,
+} from './git-workspace.service.js';
+
+export interface ContextBudgetOptions {
+  maxFiles?: number;
+  maxBytes?: number;
+}
 
 export class RepositoryContextBuilder {
   async buildContext(
     contract: EngineeringContract,
-    workspace: RepositoryWorkspace
+    workspace: RepositoryWorkspace,
+    budget: ContextBudgetOptions = {}
   ): Promise<RepositoryContext> {
     const repoPath = workspace.repositoryPath;
+    const maxFiles = budget.maxFiles ?? 30;
+    const maxBytes = budget.maxBytes ?? 256 * 1024; // 256 KB
+
+    let filesInspected = 0;
+    let filesOmitted = 0;
 
     // Collect all candidate code files
-    const allFiles = this.collectSourceFiles(repoPath);
+    const allFiles = this.collectSourceFiles(repoPath, repoPath, (inspected, omitted) => {
+      filesInspected += inspected;
+      filesOmitted += omitted;
+    });
 
     // Extract keywords from concerns, decisions, and invariants
     const terms = new Set<string>();
@@ -87,7 +105,33 @@ export class RepositoryContextBuilder {
       }
     }
 
-    const relevantFiles = Array.from(relevantFilesSet).slice(0, 30); // Bound context size
+    // Bound context size by files and bytes
+    const boundedCandidates = Array.from(relevantFilesSet);
+    const relevantFiles: string[] = [];
+    let contextBytes = 0;
+
+    for (const file of boundedCandidates) {
+      if (relevantFiles.length >= maxFiles) {
+        filesOmitted++;
+        continue;
+      }
+
+      const fullPath = path.join(repoPath, file);
+      let size = 0;
+      try {
+        size = fs.statSync(fullPath).size;
+      } catch {
+        // ignore
+      }
+
+      if (contextBytes + size > maxBytes && relevantFiles.length > 0) {
+        filesOmitted++;
+        continue;
+      }
+
+      relevantFiles.push(file);
+      contextBytes += size;
+    }
 
     // Identify relevant directories
     const relevantDirsSet = new Set<string>();
@@ -126,6 +170,8 @@ export class RepositoryContextBuilder {
       unresolvedQuestions.push('How should tests be executed if no package.json test script is declared?');
     }
 
+    const selectionRationale = `Selected ${relevantFiles.length} files (${contextBytes} bytes) based on entry point detection, test coverage, and semantic keyword matching from ${contract.discoveredConcerns.length} contract concerns. ${filesOmitted} files omitted to preserve context bounds.`;
+
     return RepositoryContextSchema.parse({
       repositoryPath: workspace.repositoryPath,
       relevantFiles,
@@ -135,10 +181,18 @@ export class RepositoryContextBuilder {
       existingTests,
       implementationObservations: observations,
       unresolvedQuestions,
+      filesInspected,
+      filesOmitted,
+      contextBytes,
+      selectionRationale,
     });
   }
 
-  private collectSourceFiles(dir: string, baseDir: string = dir): string[] {
+  private collectSourceFiles(
+    dir: string,
+    baseDir: string = dir,
+    onCount?: (inspected: number, omitted: number) => void
+  ): string[] {
     const results: string[] = [];
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -146,13 +200,30 @@ export class RepositoryContextBuilder {
         const fullPath = path.join(dir, entry.name);
         const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
 
+        // Secret and credential scanning filter
         if (isSensitivePath(relPath)) {
+          if (onCount) onCount(1, 1);
           continue;
         }
 
+        // Symlink boundary safety: never follow external symlinks
+        if (entry.isSymbolicLink()) {
+          if (!isSafeSymlink(fullPath, baseDir)) {
+            if (onCount) onCount(1, 1);
+            continue;
+          }
+        }
+
         if (entry.isDirectory()) {
-          results.push(...this.collectSourceFiles(fullPath, baseDir));
+          results.push(...this.collectSourceFiles(fullPath, baseDir, onCount));
         } else if (entry.isFile()) {
+          // Binary and huge file filter
+          if (isBinaryOrHugeFile(relPath, fullPath)) {
+            if (onCount) onCount(1, 1);
+            continue;
+          }
+
+          if (onCount) onCount(1, 0);
           results.push(relPath);
         }
       }

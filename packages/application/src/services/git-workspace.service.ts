@@ -6,6 +6,9 @@ import {
   RepositoryWorkspace,
   RepositoryWorkspaceSchema,
   PackageManifestSummary,
+  RepositoryFingerprint,
+  RepositoryFingerprintSchema,
+  ProductFailureCode,
 } from '@architectai/domain';
 
 const execFileAsync = promisify(execFile);
@@ -19,18 +22,67 @@ export class NonGitRepositoryError extends Error {
 
 export const SENSITIVE_PATTERNS = [
   /^\.env($|\..*)/i,
-  /\.(pem|key|pfx|p12)$/i,
+  /\.(pem|key|pfx|p12|pkcs12)$/i,
   /id_(rsa|dsa|ecdsa|ed25519)($|\.)/i,
   /(^|\/|\\)(credentials|secrets|token|auth)\.json$/i,
+  /(^|\/|\\)\.aws(\/|\\)(credentials|config)$/i,
   /(^|\/|\\)\.git($|\/|\\)/i,
   /(^|\/|\\)node_modules($|\/|\\)/i,
   /(^|\/|\\)(dist|build|\.turbo|\.next|target)($|\/|\\)/i,
   /\.log$/i,
 ];
 
+export const BINARY_EXTENSIONS = new Set([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico', '.svgz',
+  '.pdf', '.zip', '.tar', '.gz', '.tgz', '.7z', '.rar',
+  '.exe', '.bin', '.dll', '.so', '.dylib', '.wasm',
+  '.db', '.sqlite', '.sqlite3',
+  '.mp3', '.mp4', '.avi', '.mov', '.wav',
+  '.woff', '.woff2', '.ttf', '.eot',
+]);
+
 export function isSensitivePath(filePath: string): boolean {
   const normalized = filePath.replace(/\\/g, '/');
   return SENSITIVE_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+export function isBinaryOrHugeFile(filePath: string, fullPath?: string): boolean {
+  const ext = path.extname(filePath).toLowerCase();
+  if (BINARY_EXTENSIONS.has(ext)) {
+    return true;
+  }
+  if (fullPath && fs.existsSync(fullPath)) {
+    try {
+      const stat = fs.statSync(fullPath);
+      if (stat.size > 256 * 1024) { // > 256 KB
+        return true;
+      }
+      // Check first 512 bytes for null byte (binary indicator)
+      const fd = fs.openSync(fullPath, 'r');
+      const buffer = Buffer.alloc(Math.min(512, stat.size));
+      fs.readSync(fd, buffer, 0, buffer.length, 0);
+      fs.closeSync(fd);
+      for (let i = 0; i < buffer.length; i++) {
+        if (buffer[i] === 0) {
+          return true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return false;
+}
+
+export function isSafeSymlink(targetPath: string, rootDir: string): boolean {
+  try {
+    const realTarget = fs.realpathSync(targetPath);
+    const resolvedRoot = path.resolve(rootDir);
+    const relative = path.relative(resolvedRoot, realTarget);
+    return !relative.startsWith('..') && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
 }
 
 export class GitWorkspaceService {
@@ -41,7 +93,6 @@ export class GitWorkspaceService {
       throw new NonGitRepositoryError(resolvedPath, 'Path does not exist');
     }
 
-    // Verify git repository and that resolvedPath is the top level of this repository
     const hasGitEntry = fs.existsSync(path.join(resolvedPath, '.git'));
     if (!hasGitEntry) {
       throw new NonGitRepositoryError(resolvedPath, 'Directory is not the root of a Git repository (missing .git)');
@@ -66,7 +117,6 @@ export class GitWorkspaceService {
       const { stdout } = await execFileAsync('git', ['-C', resolvedPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
       currentBranch = stdout.trim();
     } catch {
-      // In detached HEAD or fresh repo
       try {
         const { stdout } = await execFileAsync('git', ['-C', resolvedPath, 'branch', '--show-current']);
         currentBranch = stdout.trim() || 'detached';
@@ -105,7 +155,7 @@ export class GitWorkspaceService {
       trackedFiles = [];
     }
 
-    // Package manifests & build scripts
+    // Package manifests & build scripts (supporting monorepos)
     const manifests = this.findPackageManifests(resolvedPath);
     const buildScripts: Record<string, string> = {};
     for (const manifest of manifests) {
@@ -139,28 +189,183 @@ export class GitWorkspaceService {
     });
   }
 
-  private findPackageManifests(repoPath: string): PackageManifestSummary[] {
-    const manifests: PackageManifestSummary[] = [];
-    const rootPkgPath = path.join(repoPath, 'package.json');
+  /**
+   * Computes an immutable repository fingerprint against the current repository state.
+   */
+  async computeFingerprint(repoPath: string, repositoryId: string = 'repo-default'): Promise<RepositoryFingerprint> {
+    const resolvedPath = path.resolve(repoPath);
 
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error(`Repository path '${resolvedPath}' does not exist.`);
+    }
+
+    const { stdout: gitRootOut } = await execFileAsync('git', ['-C', resolvedPath, 'rev-parse', '--show-toplevel']);
+    const gitRoot = path.resolve(gitRootOut.trim());
+
+    const { stdout: headOut } = await execFileAsync('git', ['-C', resolvedPath, 'rev-parse', 'HEAD']);
+    const headCommit = headOut.trim();
+
+    let branch = 'unknown';
+    try {
+      const { stdout: branchOut } = await execFileAsync('git', ['-C', resolvedPath, 'rev-parse', '--abbrev-ref', 'HEAD']);
+      branch = branchOut.trim();
+    } catch {
+      branch = 'detached';
+    }
+
+    const { stdout: statusOut } = await execFileAsync('git', ['-C', resolvedPath, 'status', '--porcelain']);
+    const dirtyLines = statusOut.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    const isClean = dirtyLines.length === 0;
+
+    let initialCommit = headCommit;
+    try {
+      const { stdout: rootOut } = await execFileAsync('git', ['-C', resolvedPath, 'rev-list', '--max-parents=0', 'HEAD']);
+      const roots = rootOut.trim().split(/\r?\n/);
+      initialCommit = roots[0] || headCommit;
+    } catch {
+      initialCommit = headCommit;
+    }
+
+    let remoteUrl: string | undefined;
+    try {
+      const { stdout: remoteOut } = await execFileAsync('git', ['-C', resolvedPath, 'config', '--get', 'remote.origin.url']);
+      remoteUrl = remoteOut.trim() || undefined;
+    } catch {
+      remoteUrl = undefined;
+    }
+
+    return RepositoryFingerprintSchema.parse({
+      repositoryId,
+      gitRoot,
+      headCommit,
+      branch,
+      isClean,
+      dirtyFilesCount: dirtyLines.length,
+      initialCommit,
+      remoteUrl,
+      fingerprintedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Validates repository identity before executing implementation or repair.
+   * Catches moved, deleted, or replaced repositories.
+   */
+  async verifyRepositoryIdentity(
+    canonicalLocalPath: string,
+    expectedInitialCommit?: string,
+    expectedGitRoot?: string
+  ): Promise<{ valid: boolean; failureCode?: ProductFailureCode; reason?: string }> {
+    const resolvedPath = path.resolve(canonicalLocalPath);
+
+    if (!fs.existsSync(resolvedPath)) {
+      return {
+        valid: false,
+        failureCode: 'REPOSITORY_UNAVAILABLE',
+        reason: `Registered repository path '${resolvedPath}' does not exist on filesystem.`,
+      };
+    }
+
+    const hasGit = fs.existsSync(path.join(resolvedPath, '.git'));
+    if (!hasGit) {
+      return {
+        valid: false,
+        failureCode: 'REPOSITORY_UNAVAILABLE',
+        reason: `Directory '${resolvedPath}' is no longer a valid Git repository (missing .git).`,
+      };
+    }
+
+    try {
+      const { stdout: rootOut } = await execFileAsync('git', ['-C', resolvedPath, 'rev-parse', '--show-toplevel']);
+      const actualGitRoot = path.resolve(rootOut.trim());
+
+      if (
+        expectedGitRoot &&
+        path.resolve(expectedGitRoot).toLowerCase().replace(/\\/g, '/') !==
+          actualGitRoot.toLowerCase().replace(/\\/g, '/')
+      ) {
+        return {
+          valid: false,
+          failureCode: 'REPOSITORY_IDENTITY_MISMATCH',
+          reason: `Git root mismatch: expected '${expectedGitRoot}', but found '${actualGitRoot}'.`,
+        };
+      }
+
+      if (expectedInitialCommit) {
+        const { stdout: initOut } = await execFileAsync('git', ['-C', resolvedPath, 'rev-list', '--max-parents=0', 'HEAD']);
+        const roots = initOut.trim().split(/\r?\n/);
+        const actualInitialCommit = roots[0];
+
+        if (actualInitialCommit && actualInitialCommit !== expectedInitialCommit) {
+          return {
+            valid: false,
+            failureCode: 'REPOSITORY_IDENTITY_MISMATCH',
+            reason: `Repository replacement detected: initial commit root '${actualInitialCommit}' does not match registered repository root '${expectedInitialCommit}'.`,
+          };
+        }
+      }
+
+      return { valid: true };
+    } catch (err: unknown) {
+      return {
+        valid: false,
+        failureCode: 'REPOSITORY_UNAVAILABLE',
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  public findPackageManifests(repoPath: string): PackageManifestSummary[] {
+    const manifests: PackageManifestSummary[] = [];
+
+    // 1. Root package.json
+    const rootPkgPath = path.join(repoPath, 'package.json');
     if (fs.existsSync(rootPkgPath) && !isSensitivePath(rootPkgPath)) {
-      try {
-        const raw = fs.readFileSync(rootPkgPath, 'utf-8');
-        const parsed = JSON.parse(raw);
-        manifests.push({
-          path: 'package.json',
-          name: typeof parsed.name === 'string' ? parsed.name : undefined,
-          version: typeof parsed.version === 'string' ? parsed.version : undefined,
-          dependencies: typeof parsed.dependencies === 'object' && parsed.dependencies !== null ? parsed.dependencies : {},
-          devDependencies: typeof parsed.devDependencies === 'object' && parsed.devDependencies !== null ? parsed.devDependencies : {},
-          scripts: typeof parsed.scripts === 'object' && parsed.scripts !== null ? parsed.scripts : {},
-        });
-      } catch {
-        // ignore parse errors in unformatted manifests
+      const rootManifest = this.parseManifest(rootPkgPath, 'package.json');
+      if (rootManifest) manifests.push(rootManifest);
+    }
+
+    // 2. Discover monorepo package.json in packages/*, apps/*, modules/*
+    const subDirs = ['packages', 'apps', 'modules', 'services'];
+    for (const sub of subDirs) {
+      const parentDir = path.join(repoPath, sub);
+      if (fs.existsSync(parentDir) && fs.statSync(parentDir).isDirectory()) {
+        try {
+          const entries = fs.readdirSync(parentDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory()) {
+              const childPkgPath = path.join(parentDir, entry.name, 'package.json');
+              if (fs.existsSync(childPkgPath) && !isSensitivePath(childPkgPath)) {
+                const relPath = path.relative(repoPath, childPkgPath).replace(/\\/g, '/');
+                const m = this.parseManifest(childPkgPath, relPath);
+                if (m) manifests.push(m);
+              }
+            }
+          }
+        } catch {
+          // ignore unreadable subdirectories
+        }
       }
     }
 
     return manifests;
+  }
+
+  private parseManifest(fullPath: string, relPath: string): PackageManifestSummary | null {
+    try {
+      const raw = fs.readFileSync(fullPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      return {
+        path: relPath,
+        name: typeof parsed.name === 'string' ? parsed.name : undefined,
+        version: typeof parsed.version === 'string' ? parsed.version : undefined,
+        dependencies: typeof parsed.dependencies === 'object' && parsed.dependencies !== null ? parsed.dependencies : {},
+        devDependencies: typeof parsed.devDependencies === 'object' && parsed.devDependencies !== null ? parsed.devDependencies : {},
+        scripts: typeof parsed.scripts === 'object' && parsed.scripts !== null ? parsed.scripts : {},
+      };
+    } catch {
+      return null;
+    }
   }
 
   private detectLanguages(files: string[]): string[] {

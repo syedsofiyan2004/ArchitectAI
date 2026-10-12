@@ -13,6 +13,14 @@ export interface StoreArtifactResult {
   sizeBytes: number;
 }
 
+export class ArtifactCorruptedError extends Error {
+  readonly code = 'ARTIFACT_CORRUPTED';
+  constructor(message: string) {
+    super(message);
+    this.name = 'ArtifactCorruptedError';
+  }
+}
+
 export class BoundedArtifactStorage {
   private readonly baseDir: string;
   private readonly maxSizeBytes: number;
@@ -77,7 +85,7 @@ export class BoundedArtifactStorage {
     };
   }
 
-  public readArtifact(runId: string, filename: string): string {
+  public readArtifact(runId: string, filename: string, expectedHash?: string): string {
     const safeRunId = this.sanitizeIdentifier(runId);
     const safeFilename = this.sanitizeIdentifier(filename);
     const targetPath = path.resolve(this.baseDir, safeRunId, safeFilename);
@@ -88,7 +96,28 @@ export class BoundedArtifactStorage {
       throw new Error(`Artifact '${filename}' for run '${runId}' does not exist.`);
     }
 
-    return fs.readFileSync(targetPath, 'utf-8');
+    const content = fs.readFileSync(targetPath, 'utf-8');
+
+    if (expectedHash) {
+      const actualHash = crypto.createHash('sha256').update(Buffer.from(content, 'utf-8')).digest('hex');
+      if (actualHash !== expectedHash) {
+        throw new ArtifactCorruptedError(
+          `Artifact '${filename}' for run '${runId}' is corrupted: hash mismatch (expected ${expectedHash}, got ${actualHash}).`
+        );
+      }
+    }
+
+    return content;
+  }
+
+  public verifyArtifactIntegrity(runId: string, filename: string, expectedHash: string): boolean {
+    try {
+      this.readArtifact(runId, filename, expectedHash);
+      return true;
+    } catch (err) {
+      if (err instanceof ArtifactCorruptedError) return false;
+      throw err;
+    }
   }
 
   private sanitizeIdentifier(name: string): string {

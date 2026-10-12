@@ -5,9 +5,13 @@ import {
   ImplementationPlanSchema,
 } from '@architectai/domain';
 import { ProviderAdapter } from '@architectai/providers';
+import { GitWorkspaceService } from '../services/git-workspace.service.js';
 
 export class CompileImplementationPlanUseCase {
-  constructor(private readonly provider: ProviderAdapter) {}
+  constructor(
+    private readonly provider: ProviderAdapter,
+    private readonly gitWorkspace: GitWorkspaceService = new GitWorkspaceService()
+  ) {}
 
   async execute(
     contract: EngineeringContract,
@@ -64,6 +68,14 @@ export class CompileImplementationPlanUseCase {
     });
 
     const plan = ImplementationPlanSchema.parse(response.data);
+
+    if (context.repositoryPath) {
+      try {
+        plan.repositoryFingerprint = await this.gitWorkspace.computeFingerprint(context.repositoryPath);
+      } catch {
+        // If not a git repo or isolated test, fingerprint remains undefined
+      }
+    }
 
     // Validate architectural traceability
     for (const task of plan.tasks) {

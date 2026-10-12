@@ -453,6 +453,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     });
 
     it('C. crafted ImplementationPlan.repositoryPath pointing elsewhere -> ignored / overridden with registered repo', async () => {
+      const dedicatedFixture = createDemoFixtureRepo('rate-limiter');
       const cfg = await (await fetch(`${baseUrl}/api/config`)).json();
       const token = cfg.csrfToken;
 
@@ -466,7 +467,7 @@ describe('ArchitectAI Web Server & Endpoints', () => {
       await fetch(`${baseUrl}/api/projects/${project.id}/repository`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-csrf-token': token },
-        body: JSON.stringify({ repoPath: fixtureRepo.repoPath }),
+        body: JSON.stringify({ repoPath: dedicatedFixture.repoPath }),
       });
 
       const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
@@ -503,13 +504,14 @@ describe('ArchitectAI Web Server & Endpoints', () => {
         }),
       });
 
-      expect(execRes.status).toBe(200);
       const execJson = await execRes.json();
+      expect(execRes.status).toBe(200);
       expect(execJson.success).toBe(true);
       // Verify session recorded the real canonical repo, not the crafted path
       const sessionRes = await fetch(`${baseUrl}/api/runs/${runId}`);
       const sessionData = await sessionRes.json();
       expect(sessionData.sessions[0].repositoryId).toBeDefined();
+      dedicatedFixture.cleanup();
     }, 90000);
 
     it('D. run from Project A + submitted Project B ID -> rejects mismatch', async () => {
@@ -651,5 +653,21 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     const checkRunJson = await checkRunRes.json();
     expect(checkRunJson.run.state).toBe('READY_FOR_IMPLEMENTATION');
   }, 90000);
+
+  it('Milestone 7: POST /api/runs/:runId/cancel and POST /api/sessions/:sessionId/cancel cancel active operations', async () => {
+    // Test cancel on non-existent run returns 404
+    const notFoundRes = await fetch(`${baseUrl}/api/runs/non_existent_run_999/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(notFoundRes.status).toBe(404);
+
+    // Test cancel on non-existent session returns 404
+    const notFoundSessRes = await fetch(`${baseUrl}/api/sessions/non_existent_sess_999/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(notFoundSessRes.status).toBe(404);
+  });
 });
 

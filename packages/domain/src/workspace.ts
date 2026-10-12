@@ -33,5 +33,9 @@ export const RepositoryContextSchema = z.object({
   existingTests: z.array(z.string()).default([]),
   implementationObservations: z.array(z.string()).default([]),
   unresolvedQuestions: z.array(z.string()).default([]),
+  filesInspected: z.number().default(0),
+  filesOmitted: z.number().default(0),
+  contextBytes: z.number().default(0),
+  selectionRationale: z.string().optional(),
 });
 export type RepositoryContext = z.infer<typeof RepositoryContextSchema>;

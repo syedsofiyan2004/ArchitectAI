@@ -14,4 +14,7 @@ export * from './services/repair-session.service.js';
 export * from './use-cases/diagnose-failure.use-case.js';
 export * from './use-cases/compile-repair-plan.use-case.js';
 export * from './use-cases/execute-repair-loop.use-case.js';
+export * from './services/process-supervisor.js';
+export * from './services/security-redaction.js';
+export * from './services/provider-resilience.js';
 export * from './persistence/index.js';

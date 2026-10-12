@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { RepositoryFingerprintSchema } from './hardening.js';
 
 export const ImplementationTaskRiskLevelSchema = z.enum(['low', 'medium', 'high']);
 export type ImplementationTaskRiskLevel = z.infer<typeof ImplementationTaskRiskLevelSchema>;
@@ -36,6 +37,7 @@ export const ImplementationPlanSchema = z.object({
   id: z.string(),
   contractId: z.string(),
   repositoryPath: z.string(),
+  repositoryFingerprint: RepositoryFingerprintSchema.optional(),
   summary: z.string(),
   tasks: z.array(ImplementationTaskSchema).min(1),
   createdAt: z.string(),

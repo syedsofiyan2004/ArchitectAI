@@ -37,6 +37,7 @@ import {
   CrashRecoveryService,
   KnowledgeBootstrapService,
   SystemCapabilityService,
+  redactSensitiveData,
 } from '@architectai/application';
 import {
   EngineeringContractSchema,
@@ -45,6 +46,7 @@ import {
   VerificationRunResultSchema,
   Project,
   ArchitectureRun,
+  ProductFailureCode,
 } from '@architectai/domain';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +57,35 @@ export const DEFAULT_HOST = '127.0.0.1';
 export interface ServerOptions {
   dbPath?: string;
   artifactsDir?: string;
+}
+
+export function sendApiError(
+  res: Response,
+  status: number,
+  code: ProductFailureCode,
+  message: string,
+  extra?: {
+    recoverable?: boolean;
+    retryable?: boolean;
+    userActionRequired?: string;
+    technicalDetails?: string;
+  }
+) {
+  const safeMessage = redactSensitiveData(message);
+  const safeDetails = extra?.technicalDetails ? redactSensitiveData(extra.technicalDetails) : undefined;
+  return res.status(status).json({
+    success: false,
+    error: safeMessage,
+    code,
+    failure: {
+      code,
+      message: safeMessage,
+      recoverable: extra?.recoverable ?? false,
+      retryable: extra?.retryable ?? false,
+      userActionRequired: extra?.userActionRequired,
+      technicalDetails: safeDetails,
+    },
+  });
 }
 
 export async function createServer(options: ServerOptions = {}) {
@@ -122,6 +153,8 @@ export async function createServer(options: ServerOptions = {}) {
   const repairPlanCompiler = new CompileRepairPlanUseCase();
   const repairLoopUseCase = new ExecuteRepairLoopUseCase(agentGateway);
   const activeWorktreeSessions = new Map<string, IsolatedWorktreeSession>();
+  const activeOperations = new Map<string, AbortController>();
+  const sessionToRunMap = new Map<string, string>();
 
   // 5. Crash Recovery on Server Startup
   const crashRecoveryService = new CrashRecoveryService(sessionStore, runStore, repoStore);
@@ -972,6 +1005,66 @@ export async function createServer(options: ServerOptions = {}) {
     }
   });
 
+  // Cancellation endpoints
+  app.post('/api/runs/:runId/cancel', (req: Request, res: Response) => {
+    try {
+      const { runId } = req.params;
+      const controller = activeOperations.get(runId);
+      if (controller) {
+        controller.abort();
+        activeOperations.delete(runId);
+        runStore.updateState(runId, 'FAILED');
+        return res.json({ success: true, message: `Run '${runId}' operation cancelled.`, cancelled: true });
+      }
+
+      const run = runStore.findById(runId);
+      if (!run) {
+        return res.status(404).json({ error: `Architecture run '${runId}' not found.` });
+      }
+
+      if (['ANALYZING', 'IMPLEMENTING', 'REPAIRING'].includes(run.state)) {
+        runStore.updateState(runId, 'FAILED');
+        return res.json({ success: true, message: `Run '${runId}' marked as cancelled.`, cancelled: true });
+      }
+
+      return res.status(400).json({ error: `No active cancellable operation for run '${runId}'.` });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  app.post('/api/sessions/:sessionId/cancel', (req: Request, res: Response) => {
+    try {
+      const { sessionId } = req.params;
+      const controller = activeOperations.get(sessionId);
+      if (controller) {
+        controller.abort();
+        activeOperations.delete(sessionId);
+        sessionStore.update(sessionId, { status: 'CANCELLED', completedAt: new Date().toISOString() });
+        const runId = sessionToRunMap.get(sessionId);
+        if (runId) {
+          runStore.updateState(runId, 'FAILED');
+        }
+        return res.json({ success: true, message: `Session '${sessionId}' cancelled.`, cancelled: true });
+      }
+
+      const session = sessionStore.findById(sessionId);
+      if (!session) {
+        return res.status(404).json({ error: `Session '${sessionId}' not found.` });
+      }
+
+      if (session.status === 'IMPLEMENTING') {
+        sessionStore.update(sessionId, { status: 'CANCELLED', completedAt: new Date().toISOString() });
+        runStore.updateState(session.runId, 'FAILED');
+        return res.json({ success: true, message: `Session '${sessionId}' marked as cancelled.`, cancelled: true });
+      }
+
+      return res.status(400).json({ error: `No active cancellable operation for session '${sessionId}'.` });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // Repository Inspection
   app.post('/api/repo/inspect', async (req: Request, res: Response) => {
     try {
@@ -1057,8 +1150,12 @@ export async function createServer(options: ServerOptions = {}) {
 
   // Execute Implementation Plan (requires explicit user approval and persists session)
   app.post('/api/plan/execute', async (req: Request, res: Response) => {
+    let currentRunId: string | undefined;
+    let currentSessionId: string | undefined;
+    const abortController = new AbortController();
+
     try {
-      const { plan, agentId, approved, contract, context, runId, projectId } = req.body;
+      const { plan, agentId, approved, contract, context, runId, projectId, allowDirtyRepo } = req.body;
       if (!approved) {
         return res.status(403).json({
           success: false,
@@ -1077,6 +1174,8 @@ export async function createServer(options: ServerOptions = {}) {
       if (!run) {
         return res.status(404).json({ error: `Architecture run '${runId}' not found.` });
       }
+
+      currentRunId = run.id;
 
       if (projectId && projectId !== run.projectId) {
         return res.status(400).json({
@@ -1105,7 +1204,12 @@ export async function createServer(options: ServerOptions = {}) {
       const validatedContract = contract ? EngineeringContractSchema.parse(contract) : run.contract;
 
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      currentSessionId = sessionId;
       const now = new Date().toISOString();
+
+      activeOperations.set(run.id, abortController);
+      activeOperations.set(sessionId, abortController);
+      sessionToRunMap.set(sessionId, run.id);
 
       // Record Implementation Session in SQLite
       sessionStore.create({
@@ -1132,7 +1236,11 @@ export async function createServer(options: ServerOptions = {}) {
         agentId,
         validatedContract,
         context,
-        { preserveWorktreeOnFailure: true }
+        {
+          preserveWorktreeOnFailure: true,
+          allowDirtyRepo: Boolean(allowDirtyRepo),
+          signal: abortController.signal,
+        }
       );
 
       if (output.worktreeSession) {
@@ -1196,10 +1304,69 @@ export async function createServer(options: ServerOptions = {}) {
         },
       });
     } catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const safeMsg = redactSensitiveData(rawMsg);
+      const code = (err as any)?.code as ProductFailureCode | undefined;
+
+      if (currentSessionId) {
+        const sessionStatus = (code === 'USER_CANCELLED' || abortController.signal.aborted) ? 'CANCELLED' : 'FAILED';
+        sessionStore.update(currentSessionId, { status: sessionStatus, completedAt: new Date().toISOString() });
+      }
+
+      if (code === 'USER_CANCELLED' || abortController.signal.aborted) {
+        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        return sendApiError(res, 409, 'USER_CANCELLED', 'Operation was cancelled by user.', {
+          recoverable: true,
+          userActionRequired: 'Restart implementation when ready.',
+        });
+      }
+      if (code === 'REPOSITORY_CHANGED') {
+        if (currentRunId) runStore.updateState(currentRunId, 'READY_FOR_IMPLEMENTATION');
+        return sendApiError(res, 409, 'REPOSITORY_CHANGED', safeMsg, {
+          recoverable: true,
+          userActionRequired: 'Recompile implementation plan against updated repository HEAD.',
+        });
+      }
+      if (code === 'REPOSITORY_DIRTY') {
+        if (currentRunId) runStore.updateState(currentRunId, 'READY_FOR_IMPLEMENTATION');
+        return sendApiError(res, 409, 'REPOSITORY_DIRTY', safeMsg, {
+          recoverable: true,
+          userActionRequired: 'Commit, stash, or pass allowDirtyRepo to execute anyway.',
+        });
+      }
+      if (code === 'REPOSITORY_IDENTITY_MISMATCH' || code === 'REPOSITORY_UNAVAILABLE') {
+        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        return sendApiError(res, 409, code, safeMsg, {
+          recoverable: false,
+          userActionRequired: 'Re-register repository with valid git root and commit.',
+        });
+      }
+      if (code === 'SCOPE_VIOLATION') {
+        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        return sendApiError(res, 403, 'SCOPE_VIOLATION', safeMsg, {
+          recoverable: false,
+          userActionRequired: 'Review modified files; coding agent exceeded authorized scope.',
+        });
+      }
+      if (code === 'ARTIFACT_CORRUPTED') {
+        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        return sendApiError(res, 500, 'ARTIFACT_CORRUPTED', safeMsg, {
+          recoverable: false,
+          userActionRequired: 'Inspect disk integrity or regenerate artifact.',
+        });
+      }
+
+      if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
       return res.status(500).json({
         success: false,
-        error: err instanceof Error ? err.message : 'Execution failed.',
+        error: safeMsg,
       });
+    } finally {
+      if (currentRunId) activeOperations.delete(currentRunId);
+      if (currentSessionId) {
+        activeOperations.delete(currentSessionId);
+        sessionToRunMap.delete(currentSessionId);
+      }
     }
   });
 
@@ -1292,6 +1459,12 @@ export async function createServer(options: ServerOptions = {}) {
 
   // Execute Repair Loop (requires explicit user approval)
   app.post('/api/repair/execute', async (req: Request, res: Response) => {
+    const { runId } = req.body;
+    const abortController = new AbortController();
+    if (runId && typeof runId === 'string') {
+      activeOperations.set(runId, abortController);
+    }
+
     try {
       const {
         contract,
@@ -1303,7 +1476,6 @@ export async function createServer(options: ServerOptions = {}) {
         repairPlan,
         maxAttempts,
         agentId,
-        runId,
         approved,
       } = req.body;
 
@@ -1351,6 +1523,7 @@ export async function createServer(options: ServerOptions = {}) {
         maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : 3,
         agentId,
         cleanupWorktreeOnFinish: true,
+        signal: abortController.signal,
       });
 
       if (runId) {
@@ -1419,10 +1592,27 @@ export async function createServer(options: ServerOptions = {}) {
         repairResult,
       });
     } catch (err: unknown) {
+      const rawMsg = err instanceof Error ? err.message : String(err);
+      const safeMsg = redactSensitiveData(rawMsg);
+      const code = (err as any)?.code as ProductFailureCode | undefined;
+
+      if (code === 'USER_CANCELLED' || abortController.signal.aborted) {
+        if (runId) runStore.updateState(runId, 'FAILED');
+        return sendApiError(res, 409, 'USER_CANCELLED', 'Repair loop was cancelled by user.', {
+          recoverable: true,
+          userActionRequired: 'Restart repair when ready.',
+        });
+      }
+
+      if (runId) runStore.updateState(runId, 'FAILED');
       return res.status(500).json({
         success: false,
-        error: err instanceof Error ? err.message : 'Repair loop execution failed.',
+        error: safeMsg,
       });
+    } finally {
+      if (runId && typeof runId === 'string') {
+        activeOperations.delete(runId);
+      }
     }
   });
 
