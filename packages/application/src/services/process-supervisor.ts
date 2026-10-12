@@ -117,11 +117,13 @@ export class ProcessSupervisor {
 
     return new Promise<SupervisedExecutionResult>((resolve) => {
       // Spawn detached on unix so process group can be killed together
+      const isWin = os.platform() === 'win32';
+      const needsShell = isWin && (command === 'npm' || command.endsWith('.cmd') || command.endsWith('.bat'));
       const child = spawn(command, args, {
         cwd: options.cwd,
         env: options.env ?? process.env,
-        detached: os.platform() !== 'win32',
-        shell: false,
+        detached: !isWin,
+        shell: needsShell,
       });
 
       const entry = { pid: child.pid ?? 0, child };

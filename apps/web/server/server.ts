@@ -9,6 +9,7 @@ import {
 import {
   OpenAICompatibleProviderAdapter,
   DeterministicDemoProviderAdapter,
+  ResilientProviderAdapter,
   ProviderAdapter,
   CodingAgentGateway,
 } from '@architectai/providers';
@@ -47,6 +48,8 @@ import {
   Project,
   ArchitectureRun,
   ProductFailureCode,
+  isValidRunStateTransition,
+  RunLifecycleState,
 } from '@architectai/domain';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -119,13 +122,17 @@ export async function createServer(options: ServerOptions = {}) {
   let provider: ProviderAdapter;
 
   if (apiKey && apiKey.trim().length > 0) {
-    provider = new OpenAICompatibleProviderAdapter({
-      apiKey,
-      baseURL: process.env['ARCHITECTAI_BASE_URL'],
-      modelName: process.env['ARCHITECTAI_MODEL'],
-    });
+    provider = new ResilientProviderAdapter(
+      new OpenAICompatibleProviderAdapter({
+        apiKey,
+        baseURL: process.env['ARCHITECTAI_BASE_URL'],
+        modelName: process.env['ARCHITECTAI_MODEL'],
+      }),
+      { timeoutMs: 30_000 }
+    );
   } else {
-    provider = new DeterministicDemoProviderAdapter();
+    // DeterministicDemoProviderAdapter is already synchronous; wrap for consistent interface
+    provider = new ResilientProviderAdapter(new DeterministicDemoProviderAdapter(), { timeoutMs: 10_000 });
   }
 
   // Seed default provider configuration if empty
@@ -1005,8 +1012,14 @@ export async function createServer(options: ServerOptions = {}) {
     }
   });
 
-  // Cancellation endpoints
+  // Cancellation endpoints — require session token because these mutate persisted execution state
   app.post('/api/runs/:runId/cancel', (req: Request, res: Response) => {
+    // Require the session token: cancellation changes persisted run state
+    const tokenHeader = req.headers['x-architectai-token'] || req.headers['x-csrf-token'];
+    if (!tokenHeader || tokenHeader !== serverSessionToken) {
+      return res.status(403).json({ error: 'Forbidden: Missing or invalid session security token.' });
+    }
+
     try {
       const { runId } = req.params;
       const controller = activeOperations.get(runId);
@@ -1034,6 +1047,12 @@ export async function createServer(options: ServerOptions = {}) {
   });
 
   app.post('/api/sessions/:sessionId/cancel', (req: Request, res: Response) => {
+    // Require the session token: cancellation changes persisted session state
+    const tokenHeader = req.headers['x-architectai-token'] || req.headers['x-csrf-token'];
+    if (!tokenHeader || tokenHeader !== serverSessionToken) {
+      return res.status(403).json({ error: 'Forbidden: Missing or invalid session security token.' });
+    }
+
     try {
       const { sessionId } = req.params;
       const controller = activeOperations.get(sessionId);
@@ -1211,6 +1230,9 @@ export async function createServer(options: ServerOptions = {}) {
       activeOperations.set(sessionId, abortController);
       sessionToRunMap.set(sessionId, run.id);
 
+      const preferred = agentConfigStore.getPreferred();
+      const effectiveAgentId = agentId || preferred || 'deterministic-agent';
+
       // Record Implementation Session in SQLite
       sessionStore.create({
         id: sessionId,
@@ -1218,7 +1240,7 @@ export async function createServer(options: ServerOptions = {}) {
         projectId: run.projectId,
         repositoryId: registeredRepo.id,
         implementationPlanId: validatedPlan.id,
-        codingAgent: agentId || 'deterministic-agent',
+        codingAgent: effectiveAgentId,
         originalHead: 'HEAD',
         originalBranch: 'main',
         isolatedBranch: `architectai/${run.id}`,
@@ -1233,7 +1255,7 @@ export async function createServer(options: ServerOptions = {}) {
 
       const output = await planExecutor.execute(
         validatedPlan,
-        agentId,
+        effectiveAgentId,
         validatedContract,
         context,
         {
@@ -1313,50 +1335,61 @@ export async function createServer(options: ServerOptions = {}) {
         sessionStore.update(currentSessionId, { status: sessionStatus, completedAt: new Date().toISOString() });
       }
 
+      const safeUpdateRunState = (runId: string, targetState: RunLifecycleState) => {
+        try {
+          const runRecord = runStore.findById(runId);
+          if (runRecord && isValidRunStateTransition(runRecord.state, targetState)) {
+            runStore.updateState(runId, targetState);
+          }
+        } catch {
+          // ignore invalid state transition in error handler
+        }
+      };
+
       if (code === 'USER_CANCELLED' || abortController.signal.aborted) {
-        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
         return sendApiError(res, 409, 'USER_CANCELLED', 'Operation was cancelled by user.', {
           recoverable: true,
           userActionRequired: 'Restart implementation when ready.',
         });
       }
       if (code === 'REPOSITORY_CHANGED') {
-        if (currentRunId) runStore.updateState(currentRunId, 'READY_FOR_IMPLEMENTATION');
+        if (currentRunId) safeUpdateRunState(currentRunId, 'READY_FOR_IMPLEMENTATION');
         return sendApiError(res, 409, 'REPOSITORY_CHANGED', safeMsg, {
           recoverable: true,
           userActionRequired: 'Recompile implementation plan against updated repository HEAD.',
         });
       }
       if (code === 'REPOSITORY_DIRTY') {
-        if (currentRunId) runStore.updateState(currentRunId, 'READY_FOR_IMPLEMENTATION');
+        if (currentRunId) safeUpdateRunState(currentRunId, 'READY_FOR_IMPLEMENTATION');
         return sendApiError(res, 409, 'REPOSITORY_DIRTY', safeMsg, {
           recoverable: true,
           userActionRequired: 'Commit, stash, or pass allowDirtyRepo to execute anyway.',
         });
       }
       if (code === 'REPOSITORY_IDENTITY_MISMATCH' || code === 'REPOSITORY_UNAVAILABLE') {
-        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
         return sendApiError(res, 409, code, safeMsg, {
           recoverable: false,
           userActionRequired: 'Re-register repository with valid git root and commit.',
         });
       }
       if (code === 'SCOPE_VIOLATION') {
-        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
         return sendApiError(res, 403, 'SCOPE_VIOLATION', safeMsg, {
           recoverable: false,
           userActionRequired: 'Review modified files; coding agent exceeded authorized scope.',
         });
       }
       if (code === 'ARTIFACT_CORRUPTED') {
-        if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+        if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
         return sendApiError(res, 500, 'ARTIFACT_CORRUPTED', safeMsg, {
           recoverable: false,
           userActionRequired: 'Inspect disk integrity or regenerate artifact.',
         });
       }
 
-      if (currentRunId) runStore.updateState(currentRunId, 'FAILED');
+      if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
       return res.status(500).json({
         success: false,
         error: safeMsg,

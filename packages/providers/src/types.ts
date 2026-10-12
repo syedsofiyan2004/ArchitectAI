@@ -59,13 +59,19 @@ export interface AgentWorkspace {
   headCommit: string;
 }
 
+export interface AgentExecutionOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export interface CodingAgentAdapter {
   readonly id: string;
   readonly name: string;
   detect(): Promise<AgentAvailability>;
   executeTask(
     workspace: AgentWorkspace,
-    task: import('@architectai/domain').ImplementationTask | import('@architectai/domain').RepairTask
+    task: import('@architectai/domain').ImplementationTask | import('@architectai/domain').RepairTask,
+    options?: AgentExecutionOptions
   ): Promise<import('@architectai/domain').AgentExecutionResult>;
   cancel(executionId: string): Promise<void>;
 }

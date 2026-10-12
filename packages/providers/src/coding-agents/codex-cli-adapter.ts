@@ -1,7 +1,5 @@
-import { execFile, execSync, ChildProcess } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import * as os from 'node:os';
-import * as fs from 'node:fs';
 import {
   ImplementationTask,
   RepairTask,
@@ -12,7 +10,15 @@ import {
   CodingAgentAdapter,
   AgentAvailability,
   AgentWorkspace,
+  AgentExecutionOptions,
 } from '../types.js';
+
+// NOTE: ProcessSupervisor lives in @architectai/application but providers must not import application.
+// We inline the minimal supervisor needed here using the same killProcessTree logic from process-supervisor.ts.
+// This avoids a circular dependency while keeping the process-tree kill behavior equivalent.
+import { spawn, ChildProcess, execSync } from 'node:child_process';
+import * as os from 'node:os';
+import * as fs from 'node:fs';
 
 const execFileAsync = promisify(execFile);
 
@@ -22,8 +28,19 @@ export interface CodexAdapterOptions {
   maxBufferBytes?: number;
 }
 
+/**
+ * Cross-platform process tree killer — duplicated here from ProcessSupervisor
+ * to avoid an application→provider import cycle.
+ */
 function killProcessTree(pid: number, child?: ChildProcess): void {
   if (!pid || pid <= 0) return;
+
+  // Liveness check: if process is already dead, return immediately
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return;
+  }
 
   const isWindows = os.platform() === 'win32';
   if (isWindows) {
@@ -31,51 +48,127 @@ function killProcessTree(pid: number, child?: ChildProcess): void {
     const taskkillPath = `${sysRoot}\\System32\\taskkill.exe`;
     const taskkillCmd = fs.existsSync(taskkillPath) ? taskkillPath : 'taskkill';
     try {
-      execSync(`"${taskkillCmd}" /pid ${pid} /T /F`, { stdio: 'ignore' });
+      execSync(`"${taskkillCmd}" /pid ${pid} /T /F`, { stdio: 'ignore', timeout: 2000 });
     } catch {
-      try {
-        execSync(`powershell -NoProfile -Command "Stop-Process -Id ${pid} -Force -ErrorAction SilentlyContinue"`, { stdio: 'ignore' });
-      } catch {
-        // ignore
-      }
+      // ignore
     }
   } else {
     try {
-      process.kill(-pid, 'SIGKILL');
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {
+        try {
+          execSync(`pkill -KILL -P ${pid}`, { stdio: 'ignore' });
+        } catch {
+          // ignore
+        }
+        try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+      }
     } catch {
-      try {
-        execSync(`pkill -KILL -P ${pid}`, { stdio: 'ignore' });
-      } catch {
-        // ignore
-      }
-      try {
-        process.kill(pid, 'SIGKILL');
-      } catch {
-        // ignore
-      }
+      // Process already exited
     }
   }
 
   if (child) {
-    try {
-      child.kill('SIGKILL');
-    } catch {
-      // ignore
-    }
+    try { child.kill('SIGKILL'); } catch { /* ignore */ }
   }
+}
+
+/**
+ * Bounded, supervised execution of the Codex CLI binary.
+ * Uses spawn (no shell interpolation), process-tree kill, AbortSignal, and bounded output.
+ */
+async function runCodexSupervised(
+  codexArgs: string[],
+  prompt: string,
+  targetDir: string,
+  timeoutMs: number,
+  maxBufferBytes: number,
+  signal: AbortSignal | undefined,
+  onLog: (line: string) => void
+): Promise<{ exitCode: number; cancelled: boolean; timedOut: boolean }> {
+  return new Promise((resolve) => {
+    const isWin = os.platform() === 'win32';
+    const child: ChildProcess = spawn(isWin ? 'codex.cmd' : 'codex', [...codexArgs, '-'], {
+      cwd: targetDir,
+      detached: !isWin,
+      shell: isWin,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    if (child.stdin) {
+      try {
+        child.stdin.write(prompt);
+        child.stdin.end();
+      } catch {
+        // child might have exited immediately
+      }
+    }
+
+    let totalStdoutBytes = 0;
+    let totalStderrBytes = 0;
+    let timedOut = false;
+    let cancelled = false;
+
+    const terminate = (reason: 'timeout' | 'cancel') => {
+      if (reason === 'timeout') timedOut = true;
+      else cancelled = true;
+      if (child.pid) killProcessTree(child.pid, child);
+    };
+
+    const timer = timeoutMs > 0
+      ? setTimeout(() => terminate('timeout'), timeoutMs)
+      : undefined;
+
+    const onAbort = () => terminate('cancel');
+    if (signal) {
+      if (signal.aborted) {
+        onAbort();
+      } else {
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      totalStdoutBytes += chunk.length;
+      if (totalStdoutBytes <= maxBufferBytes) {
+        onLog(`[codex stdout] ${chunk.toString('utf-8').trim()}`);
+      }
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      totalStderrBytes += chunk.length;
+      if (totalStderrBytes <= maxBufferBytes) {
+        onLog(`[codex stderr] ${chunk.toString('utf-8').trim()}`);
+      }
+    });
+
+    child.on('close', (code) => {
+      if (timer) clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      resolve({ exitCode: code ?? 1, cancelled, timedOut });
+    });
+
+    child.on('error', (err) => {
+      if (timer) clearTimeout(timer);
+      if (signal) signal.removeEventListener('abort', onAbort);
+      onLog(`[codex error] ${err.message}`);
+      resolve({ exitCode: 1, cancelled, timedOut });
+    });
+  });
 }
 
 export class CodexCliAgentAdapter implements CodingAgentAdapter {
   readonly id = 'codex-cli';
   readonly name = 'Codex CLI';
 
-  private activeProcesses = new Map<string, ChildProcess>();
-
   constructor(private readonly options: CodexAdapterOptions = {}) {}
 
   async detect(): Promise<AgentAvailability> {
+    const isWin = os.platform() === 'win32';
+    const binary = isWin ? 'codex.cmd' : 'codex';
     try {
-      const { stdout } = await execFileAsync('codex', ['--version'], { timeout: 8000 });
+      const { stdout } = await execFileAsync(binary, ['--version'], { timeout: 8000, shell: isWin });
       const version = stdout.trim();
       return {
         available: true,
@@ -91,22 +184,35 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
 
   async executeTask(
     workspace: AgentWorkspace,
-    task: ImplementationTask | RepairTask
+    task: ImplementationTask | RepairTask,
+    executionOptions?: AgentExecutionOptions
   ): Promise<AgentExecutionResult> {
     const executionId = `exec-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const targetDir = workspace.worktreePath || workspace.repositoryPath;
     const startTime = Date.now();
     const taskTitle = 'title' in task ? task.title : task.id;
-    const timeoutMs = this.options.timeoutMs ?? 180000; // 3 minutes
+    const timeoutMs = executionOptions?.timeoutMs ?? this.options.timeoutMs ?? 180000; // 3 min
     const maxBufferBytes = this.options.maxBufferBytes ?? 1024 * 1024; // 1 MB
+    const signal = executionOptions?.signal;
 
-    // Construct bounded prompt strictly adhering to task discipline
-    const prompt = this.buildBoundedTaskPrompt(task);
+    // Immediate cancellation check before starting
+    if (signal?.aborted) {
+      const err = new Error('Coding agent task was cancelled before starting.');
+      (err as NodeJS.ErrnoException).code = 'USER_CANCELLED';
+      throw err;
+    }
 
     const useDangerousBypass = Boolean(this.options.allowDangerousSandboxBypass);
+    if (useDangerousBypass) {
+      // Dangerous bypass requires explicit additional acknowledgement beyond default option.
+      // WARNING: This mode bypasses Codex sandbox safety mechanisms.
+      const logs = [`[ArchitectAI Gateway] DANGEROUS BYPASS MODE ACTIVE for task ${task.id}`];
+      logs.push(`[ArchitectAI Gateway] WARNING: allowDangerousSandboxBypass=true was explicitly set.`);
+    }
+
     const sandboxModeLabel = useDangerousBypass
       ? 'DANGEROUS BYPASS (--dangerously-bypass-approvals-and-sandbox)'
-      : 'SAFE WORKSPACE SANDBOX (--sandbox workspace-write --approve-for-me)';
+      : 'SAFE WORKSPACE SANDBOX (--approve-for-me [workspace-write])';
 
     const logs: string[] = [
       `[ArchitectAI Gateway] Starting execution ${executionId} on worktree: ${targetDir}`,
@@ -115,64 +221,50 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
       `[ArchitectAI Gateway] Allowed files: ${task.allowedFiles.join(', ') || 'Any non-excluded'}`,
     ];
 
-    try {
-      // Assemble codex exec arguments based on configured safety policy
-      const codexArgs = ['exec', '--cd', targetDir];
+    // Assemble codex exec arguments using structured arg array (no shell interpolation)
+    const codexArgs = ['exec', '--cd', targetDir];
 
-      if (useDangerousBypass) {
-        codexArgs.push('--dangerously-bypass-approvals-and-sandbox');
-      } else {
-        codexArgs.push('--sandbox', 'workspace-write', '--approve-for-me');
+    if (useDangerousBypass) {
+      codexArgs.push('--dangerously-bypass-approvals-and-sandbox');
+    } else {
+      // In Codex CLI, --approve-for-me automatically applies the workspace-write sandbox
+      codexArgs.push('--approve-for-me');
+    }
+
+    const prompt = this.buildBoundedTaskPrompt(task);
+
+    try {
+      const result = await runCodexSupervised(
+        codexArgs,
+        prompt,
+        targetDir,
+        timeoutMs,
+        maxBufferBytes,
+        signal,
+        (line) => logs.push(line)
+      );
+
+      // Handle cancellation
+      if (result.cancelled || signal?.aborted) {
+        const err = new Error(`Codex task ${task.id} was cancelled by user signal.`);
+        (err as NodeJS.ErrnoException).code = 'USER_CANCELLED';
+        throw err;
       }
 
-      codexArgs.push(prompt);
+      // Handle timeout
+      if (result.timedOut) {
+        const err = new Error(`Codex task ${task.id} exceeded timeout budget of ${timeoutMs}ms.`);
+        (err as NodeJS.ErrnoException).code = 'TIMED_OUT';
+        throw err;
+      }
 
-      const child = execFile('codex', codexArgs, {
-        cwd: targetDir,
-        timeout: timeoutMs,
-        maxBuffer: maxBufferBytes,
-      });
-
-      this.activeProcesses.set(executionId, child);
-
-      let totalStdoutBytes = 0;
-      let totalStderrBytes = 0;
-
-      child.stdout?.on('data', (data) => {
-        const text = data.toString();
-        totalStdoutBytes += Buffer.byteLength(text, 'utf-8');
-        if (totalStdoutBytes <= maxBufferBytes) {
-          logs.push(`[codex stdout] ${text.trim()}`);
-        }
-      });
-
-      child.stderr?.on('data', (data) => {
-        const text = data.toString();
-        totalStderrBytes += Buffer.byteLength(text, 'utf-8');
-        if (totalStderrBytes <= maxBufferBytes) {
-          logs.push(`[codex stderr] ${text.trim()}`);
-        }
-      });
-
-      await new Promise<void>((resolve, reject) => {
-        child.on('close', (code) => {
-          this.activeProcesses.delete(executionId);
-          if (code === 0) {
-            resolve();
-          } else {
-            reject(new Error(`Codex process exited with code ${code}`));
-          }
-        });
-        child.on('error', (err) => {
-          this.activeProcesses.delete(executionId);
-          reject(err);
-        });
-      });
+      if (result.exitCode !== 0) {
+        throw new Error(`Codex process exited with code ${result.exitCode}`);
+      }
 
       // Capture changed files from git status in worktree
       const changedFiles = await this.getChangedFiles(targetDir);
       const durationMs = Date.now() - startTime;
-
       logs.push(`[ArchitectAI Gateway] Execution completed in ${durationMs}ms with ${changedFiles.length} files changed.`);
 
       return AgentExecutionResultSchema.parse({
@@ -186,8 +278,14 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
         durationMs,
       });
     } catch (err) {
-      this.activeProcesses.delete(executionId);
       const durationMs = Date.now() - startTime;
+      const code = (err as NodeJS.ErrnoException).code;
+
+      // Re-throw cancellation/timeout errors directly
+      if (code === 'USER_CANCELLED' || code === 'TIMED_OUT') {
+        throw err;
+      }
+
       const errorMsg = err instanceof Error ? err.message : String(err);
       logs.push(`[ArchitectAI Gateway] Execution failed: ${errorMsg}`);
 
@@ -207,12 +305,9 @@ export class CodexCliAgentAdapter implements CodingAgentAdapter {
     }
   }
 
-  async cancel(executionId: string): Promise<void> {
-    const proc = this.activeProcesses.get(executionId);
-    if (proc && proc.pid) {
-      killProcessTree(proc.pid, proc);
-      this.activeProcesses.delete(executionId);
-    }
+  async cancel(_executionId: string): Promise<void> {
+    // Cancellation is handled via AbortSignal in executeTask.
+    // The legacy cancel(executionId) method is a no-op since the new contract uses signal.
   }
 
   private buildBoundedTaskPrompt(task: ImplementationTask | RepairTask): string {

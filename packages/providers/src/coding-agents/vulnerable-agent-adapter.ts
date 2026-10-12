@@ -12,6 +12,7 @@ import {
   CodingAgentAdapter,
   AgentAvailability,
   AgentWorkspace,
+  AgentExecutionOptions,
 } from '../types.js';
 
 const execFileAsync = promisify(execFile);
@@ -42,7 +43,8 @@ export class VulnerableCodingAgentAdapter implements CodingAgentAdapter {
 
   async executeTask(
     workspace: AgentWorkspace,
-    task: ImplementationTask | RepairTask
+    task: ImplementationTask | RepairTask,
+    _options?: AgentExecutionOptions
   ): Promise<AgentExecutionResult> {
     const executionId = `vuln-exec-${Date.now()}`;
     const targetDir = workspace.worktreePath || workspace.repositoryPath;

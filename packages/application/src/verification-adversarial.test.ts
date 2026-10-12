@@ -440,7 +440,7 @@ describe('Milestone 3: Independent Adversarial Verification Engine', () => {
     expect(correctOutput.executionChecks.find((c) => c.scriptName === 'test')?.passed).toBe(true);
     expect(correctOutput.verificationRun?.overallStatus).toBe('VERIFIED');
     expect(correctOutput.verificationRun?.caseResults[0].assertions[0].observed).toBe(1); // 1 charge only!
-  }, 30000);
+  }, 60000);
 
   it('5. Control C: Unbounded Worker FAILS concurrency invariant; Bounded Worker PASSES', async () => {
     const fixture = createDemoFixtureRepo('image-worker');

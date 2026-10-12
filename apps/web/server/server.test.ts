@@ -654,18 +654,34 @@ describe('ArchitectAI Web Server & Endpoints', () => {
     expect(checkRunJson.run.state).toBe('READY_FOR_IMPLEMENTATION');
   }, 90000);
 
-  it('Milestone 7: POST /api/runs/:runId/cancel and POST /api/sessions/:sessionId/cancel cancel active operations', async () => {
-    // Test cancel on non-existent run returns 404
-    const notFoundRes = await fetch(`${baseUrl}/api/runs/non_existent_run_999/cancel`, {
+  it('Milestone 7: POST /api/runs/:runId/cancel and POST /api/sessions/:sessionId/cancel require valid session token', async () => {
+    // 1. Missing token -> 403
+    const missingTokenRes = await fetch(`${baseUrl}/api/runs/any_run_id/cancel`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
     });
+    expect(missingTokenRes.status).toBe(403);
+    const missingJson = await missingTokenRes.json();
+    expect(missingJson.error).toContain('Forbidden: Missing or invalid session security token.');
+
+    // 2. Wrong token -> 403
+    const wrongTokenRes = await fetch(`${baseUrl}/api/sessions/any_sess_id/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': 'wrong-invalid-token' },
+    });
+    expect(wrongTokenRes.status).toBe(403);
+
+    // 3. Valid token on non-existent run -> 404
+    const notFoundRes = await fetch(`${baseUrl}/api/runs/non_existent_run_999/cancel`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': serverToken },
+    });
     expect(notFoundRes.status).toBe(404);
 
-    // Test cancel on non-existent session returns 404
+    // 4. Valid token on non-existent session -> 404
     const notFoundSessRes = await fetch(`${baseUrl}/api/sessions/non_existent_sess_999/cancel`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-csrf-token': serverToken },
     });
     expect(notFoundSessRes.status).toBe(404);
   });

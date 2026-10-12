@@ -8,10 +8,12 @@ import {
   VerificationPlan,
   VerificationRunResult,
   ProductFailureCode,
+  DEFAULT_EXECUTION_TIME_BUDGETS,
+  ExecutionTimeBudgets,
 } from '@architectai/domain';
 import { CodingAgentGateway } from '@architectai/providers';
 import { GitIsolationService, GitDiffReport, IsolatedWorktreeSession } from '../services/git-isolation.service.js';
-import { ExecutionChecksService, ExecutionCheckResult } from '../services/execution-checks.service.js';
+import { ExecutionChecksService, ExecutionCheckResult, NativeCheckSpec } from '../services/execution-checks.service.js';
 import { CompileVerificationPlanUseCase } from './compile-verification-plan.use-case.js';
 import { VerifyImplementationUseCase } from './verify-implementation.use-case.js';
 import { GitWorkspaceService } from '../services/git-workspace.service.js';
@@ -20,6 +22,7 @@ export interface PlanExecutionOptions {
   preserveWorktreeOnFailure?: boolean;
   allowDirtyRepo?: boolean;
   signal?: AbortSignal;
+  budgets?: Partial<ExecutionTimeBudgets>;
 }
 
 export interface PlanExecutionOutput {
@@ -64,6 +67,10 @@ export class ExecuteImplementationPlanUseCase {
     options?: PlanExecutionOptions
   ): Promise<PlanExecutionOutput> {
     const runId = `run-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const budgets: ExecutionTimeBudgets = {
+      ...DEFAULT_EXECUTION_TIME_BUDGETS,
+      ...(options?.budgets || {}),
+    };
 
     // Gate 0: Immediate cancellation check
     if (options?.signal?.aborted) {
@@ -112,7 +119,8 @@ export class ExecuteImplementationPlanUseCase {
     const availableAgents = await this.agentGateway.listAvailableAgents();
     let agentEntry = requestedAgentId
       ? availableAgents.find((a) => a.adapter.id === requestedAgentId)
-      : availableAgents.find((a) => a.availability.available);
+      : availableAgents.find((a) => a.adapter.id === 'deterministic-agent' && a.availability.available)
+        || availableAgents.find((a) => a.availability.available);
 
     if (!agentEntry) {
       agentEntry = availableAgents[0];
@@ -140,6 +148,12 @@ export class ExecuteImplementationPlanUseCase {
       runId
     );
 
+    // Step 1b: Snapshot native check specs from the ORIGINAL repository BEFORE agent modification.
+    // This prevents a malicious/modified package.json from injecting new commands.
+    const preAgentCheckSpecs: NativeCheckSpec[] = await this.executionChecks.snapshotNativeCheckSpecs(
+      plan.repositoryPath
+    );
+
     const taskResults: AgentExecutionResult[] = [];
     const orderedTasks = this.sortTasksByDependencies(plan.tasks);
 
@@ -161,7 +175,8 @@ export class ExecuteImplementationPlanUseCase {
             branch: worktreeSession.branch,
             headCommit: worktreeSession.originalHead,
           },
-          task
+          task,
+          { signal: options?.signal, timeoutMs: budgets.codingTaskMs }  // Forward AbortSignal & task budget so cancellation and timeout reach the real process
         );
 
         // Scope verification: agent must never modify files outside worktree or outside allowedFiles (Section 22)
@@ -207,9 +222,13 @@ export class ExecuteImplementationPlanUseCase {
         }
       }
 
-      // Step 3: Run repository-native build/test checks inside worktree (Section 23)
-      const executionChecks = await this.executionChecks.runDiscoveredChecks(
-        worktreeSession.worktreePath
+      // Step 3: Run PRE-SNAPSHOTTED repository-native checks inside the worktree.
+      // Uses the check specs captured from the ORIGINAL repo BEFORE agent modification.
+      // This prevents agent-modified package.json from introducing new or malicious commands.
+      const executionChecks = await this.executionChecks.runSnapshotChecks(
+        worktreeSession.worktreePath,
+        preAgentCheckSpecs.map((s) => ({ ...s, timeoutMs: budgets.nativeCheckMs })),
+        options?.signal
       );
       const nativeChecksPassed = executionChecks.every((c) => c.passed);
 
@@ -279,7 +298,8 @@ export class ExecuteImplementationPlanUseCase {
 
       if (!allTasksCompleted) {
         status = 'FAILED';
-        failureCode = 'AGENT_FAILED';
+        const timedOutTask = taskResults.find((r) => r.failureReason?.includes('timed out') || r.failureReason?.includes('TIMED_OUT'));
+        failureCode = timedOutTask ? 'TIMED_OUT' : 'AGENT_FAILED';
       } else if (!nativeChecksPassed) {
         status = 'FAILED';
         failureCode = 'NATIVE_CHECK_FAILED';

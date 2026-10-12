@@ -41,6 +41,11 @@ export class AgentConfigurationStore {
     this.db.prepare('UPDATE agent_configurations SET preferred = 1 WHERE adapter_id = ?').run(adapterId);
   }
 
+  public getPreferred(): string | undefined {
+    const row = this.db.prepare('SELECT adapter_id FROM agent_configurations WHERE preferred = 1 LIMIT 1').get() as Record<string, unknown> | undefined;
+    return row ? String(row['adapter_id']) : undefined;
+  }
+
   private mapRow(row: Record<string, unknown>): AgentConfiguration {
     return AgentConfigurationSchema.parse({
       id: String(row['id']),
