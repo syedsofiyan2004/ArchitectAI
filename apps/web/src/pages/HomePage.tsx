@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Plus, Sparkles, ArrowRight, Clock, ShieldAlert, ChevronRight, FolderGit2, RefreshCw, GitBranch } from 'lucide-react';
 import { useRuns } from '../store/runs';
+import { StatusBadge } from '../components/ui/StatusBadge';
 
 interface HomePageProps {
   onOpenExamples: () => void;
@@ -377,17 +378,9 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenExamples }) => {
                       <Clock size={12} />
                       <span>{new Date(run.createdAt).toLocaleDateString()}</span>
                     </span>
-                    <span
-                      className={`run-card-status font-mono ${
-                        run.status === 'completed'
-                          ? 'status-done'
-                          : run.status === 'analyzing'
-                          ? 'status-active'
-                          : 'status-failed'
-                      }`}
-                    >
-                      {run.status.toUpperCase()}
-                    </span>
+                    <div className="run-card-status-wrap">
+                      <StatusBadge state={run.state || (run.status === 'completed' ? 'READY_FOR_IMPLEMENTATION' : run.status === 'analyzing' ? 'ANALYZING' : 'DRAFT')} />
+                    </div>
                   </div>
 
                   <h3 className="run-card-title">{run.title}</h3>

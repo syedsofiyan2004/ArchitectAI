@@ -8,6 +8,7 @@ import {
   XCircle,
   FileCode,
   ArrowLeft,
+  ArrowRight,
   ChevronRight,
   ChevronDown,
   GitBranch,
@@ -30,6 +31,7 @@ import {
 } from '../types';
 import { ImplementationPlan, RepositoryWorkspace, ImplementationTask } from '@architectai/domain';
 import { useRuns } from '../store/runs';
+import { BuildTimeline } from '../components/ui/BuildTimeline';
 
 interface RunContext {
   run: AnalysisRunRecord;
@@ -56,6 +58,8 @@ export const ImplementationPage: React.FC = () => {
   const [executionOutput, setExecutionOutput] = useState<PlanExecutionOutput | null>(run.execution || null);
   const [expandedCaseId, setExpandedCaseId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   // Milestone 4 Repair Loop states
   const [isDiagnosing, setIsDiagnosing] = useState<boolean>(false);
@@ -151,6 +155,13 @@ export const ImplementationPage: React.FC = () => {
     }
   };
 
+  const handleCancel = () => {
+    if (abortController) {
+      setIsCancelling(true);
+      abortController.abort();
+    }
+  };
+
   const handleExecutePlan = async () => {
     if (!plan) return;
     if (!userApproved) {
@@ -158,7 +169,10 @@ export const ImplementationPage: React.FC = () => {
       return;
     }
 
+    const controller = new AbortController();
+    setAbortController(controller);
     setIsExecuting(true);
+    setIsCancelling(false);
     setError(null);
 
     try {
@@ -168,6 +182,7 @@ export const ImplementationPage: React.FC = () => {
           'Content-Type': 'application/json',
           ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
         },
+        signal: controller.signal,
         body: JSON.stringify({
           plan,
           agentId: selectedAgentId,
@@ -188,9 +203,15 @@ export const ImplementationPage: React.FC = () => {
         execution: data.execution,
       });
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Execution failed.');
+      if (err instanceof Error && err.name === 'AbortError') {
+        setError('Build execution was cancelled by user.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Execution failed.');
+      }
     } finally {
       setIsExecuting(false);
+      setIsCancelling(false);
+      setAbortController(null);
     }
   };
 
@@ -500,6 +521,21 @@ export const ImplementationPage: React.FC = () => {
                 </>
               )}
             </button>
+
+            {isExecuting && (
+              <div className="active-build-timeline-wrap" style={{ marginTop: '1.25rem' }}>
+                <BuildTimeline
+                  stages={[
+                    { id: '1', name: 'Creating isolated Git worktree', status: 'completed', detail: `Branch architectai/${run.id}` },
+                    { id: '2', name: `Executing tasks with ${agents.find((a) => a.id === selectedAgentId)?.name || 'Coding Agent'}`, status: 'in_progress', detail: 'Running tasks in isolated workspace...' },
+                    { id: '3', name: 'Running native build & test checks', status: 'pending', detail: 'Verifying with pre-agent snapshot checks' },
+                    { id: '4', name: 'Independent adversarial verification', status: 'pending', detail: 'Evaluating contract invariants' },
+                  ]}
+                  onCancel={handleCancel}
+                  isCancelling={isCancelling}
+                />
+              </div>
+            )}
           </div>
         </section>
       )}
@@ -871,6 +907,15 @@ export const ImplementationPage: React.FC = () => {
         >
           <ArrowLeft size={16} />
           <span>Back to Verification</span>
+        </button>
+
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={() => navigate(`/runs/${run.id}/changes`)}
+        >
+          <span>View Changes & Diff</span>
+          <ArrowRight size={16} />
         </button>
       </div>
     </div>

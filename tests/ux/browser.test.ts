@@ -94,6 +94,10 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
     if (!ensureBrowserAvailable() || !browser) return;
 
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.on('pageerror', (err) => console.log('[PAGE ERROR]', err));
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') console.log('[PAGE CONSOLE ERROR]', msg.text());
+    });
     await page.goto(baseUrl, { waitUntil: 'networkidle' });
 
     // 1. Click New Architecture Analysis -> navigates to /new
@@ -154,11 +158,76 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
     const implTitle = await page.textContent('.implementation-title');
     expect(implTitle).toBe('Implementation Workspace');
 
+    // 12. Navigate to Changes & Diff view
+    await page.click('button:has-text("View Changes & Diff")');
+    await page.waitForURL('**/changes');
+    const changesTitle = await page.textContent('.changes-title');
+    expect(changesTitle).toBe('Unified Code Changes');
+
+    // 13. Verify Summary Read Endpoint (Requirement 58)
+    const runIdMatch = page.url().match(/\/runs\/(run_[^/]+)/);
+    expect(runIdMatch).not.toBeNull();
+    const runId = runIdMatch![1];
+
+    const summaryRes = await fetch(`${baseUrl}/api/runs/${runId}/summary`);
+    expect(summaryRes.status).toBe(200);
+    const summaryData = await summaryRes.json();
+    expect(summaryData.success).toBe(true);
+    expect(summaryData.summary).toBeDefined();
+    expect(summaryData.summary.runId).toBe(runId);
+    expect(['READY_TO_BUILD', 'NEEDS_INPUT', 'HIGH_RISK']).toContain(summaryData.summary.readiness);
+    expect(summaryData.summary.topRisks.length).toBeGreaterThan(0);
+    expect(['High confidence', 'Moderate confidence', 'Needs confirmation']).toContain(
+      summaryData.summary.topRisks[0].confidenceLabel
+    );
+    expect(summaryData.summary.topRisks[0].whyItMatters).toBeDefined();
+
     // Verify zero horizontal overflow on desktop
     const overflowDesktop = await page.evaluate(() => {
       return document.documentElement.scrollWidth > document.documentElement.clientWidth;
     });
     expect(overflowDesktop).toBe(false);
+
+    await page.close();
+  });
+
+  it('tests keyboard shortcuts and workspace modals (Cmd+K, Escape, N, Settings)', async () => {
+    if (!ensureBrowserAvailable() || !browser) return;
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(baseUrl, { waitUntil: 'networkidle' });
+
+    // 1. Press Cmd+K or Ctrl+K to open Command Palette
+    await page.keyboard.press('Control+k');
+    await page.waitForSelector('.command-palette-backdrop', { timeout: 5000 });
+    expect(await page.$('.command-palette-backdrop')).not.toBeNull();
+
+    // 2. Press Escape to close Command Palette
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    expect(await page.$('.command-palette-backdrop')).toBeNull();
+
+    // 3. Open Settings Modal via sidebar button
+    const settingsBtn = await page.waitForSelector('.sidebar-settings-btn');
+    await settingsBtn.click();
+    await page.waitForSelector('.settings-modal-backdrop', { timeout: 5000 });
+    expect(await page.$('.settings-modal-backdrop')).not.toBeNull();
+
+    // Verify tabs in settings
+    const generalTab = await page.$('button:has-text("General")');
+    expect(generalTab).not.toBeNull();
+    const agentTab = await page.$('button:has-text("Coding Agent")');
+    expect(agentTab).not.toBeNull();
+
+    // 4. Press Escape to close Settings Modal
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+    expect(await page.$('.settings-modal-backdrop')).toBeNull();
+
+    // 5. Press 'n' to trigger New Change shortcut
+    await page.keyboard.press('n');
+    await page.waitForURL('**/new', { timeout: 5000 });
+    expect(page.url()).toContain('/new');
 
     await page.close();
   });

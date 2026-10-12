@@ -550,6 +550,104 @@ export async function createServer(options: ServerOptions = {}) {
     }
   });
 
+  app.get('/api/runs/:runId/summary', (req: Request, res: Response) => {
+    try {
+      const run = runStore.findById(req.params.runId);
+      if (!run) {
+        return res.status(404).json({ success: false, error: 'Architecture run not found.' });
+      }
+      const answers = runStore.getUserAnswers(run.id);
+      const sessions = sessionStore.findByRunId(run.id);
+      const latestSession = sessions.length > 0 ? sessions[0] : null;
+      const contract = run.contract;
+
+      // Extract and format unanswered questions
+      const rawQuestions: string[] = [];
+      if (contract?.discoveredConcerns) {
+        for (const c of contract.discoveredConcerns) {
+          if (Array.isArray(c.unresolvedQuestions)) {
+            for (const q of c.unresolvedQuestions) {
+              if (q && !rawQuestions.includes(q)) rawQuestions.push(q);
+            }
+          }
+        }
+      }
+      const unansweredQuestions = rawQuestions.filter((q) => !answers[q]);
+
+      // Calculate executive summary
+      let executiveSummary = '';
+      if (contract) {
+        const primaryDecision = contract.decisions[0];
+        const primaryConcern = contract.discoveredConcerns[0];
+        if (primaryConcern && primaryDecision) {
+          executiveSummary = `${primaryConcern.description} Recommended approach: ${primaryDecision.selectedOptionName} — ${primaryDecision.rationale}`;
+        } else if (contract.requirement.rawIntent) {
+          executiveSummary = `ArchitectAI analyzed "${contract.requirement.rawIntent}" and verified engineering constraints.`;
+        }
+      }
+
+      // Map risks
+      const topRisks = (contract?.discoveredConcerns || []).map((c) => {
+        const conf = typeof c.confidence === 'number' ? c.confidence : 0.75;
+        const confidenceLabel = conf >= 0.85 ? 'High confidence' : conf >= 0.7 ? 'Moderate confidence' : 'Needs confirmation';
+        const severity = conf >= 0.9 ? 'critical' : conf >= 0.8 ? 'high' : conf >= 0.65 ? 'medium' : 'low';
+        const matchingDecision = contract?.decisions.find((d) => d.problemContext.toLowerCase().includes(c.title.toLowerCase()));
+
+        return {
+          id: c.id,
+          title: c.title,
+          description: c.description,
+          whyItMatters: c.applicabilityReason || c.description,
+          whenItHappens: (c.dimensions && c.dimensions.length > 0) ? c.dimensions.join(' • ') : 'High concurrency / edge conditions',
+          severity,
+          confidenceLabel,
+          confidenceValue: conf,
+          recommendation: matchingDecision?.rationale || 'Establish an explicit bounded queue and atomic concurrency control.',
+          evidenceCount: c.supportingKnowledgeIds?.length || 0,
+        };
+      });
+
+      // Calculate readiness
+      let readiness: 'READY_TO_BUILD' | 'NEEDS_INPUT' | 'HIGH_RISK' | 'BLOCKED' | 'VERIFIED' | 'VERIFICATION_FAILED' = 'READY_TO_BUILD';
+      if (run.state === 'VERIFIED') {
+        readiness = 'VERIFIED';
+      } else if (run.state === 'VERIFICATION_FAILED') {
+        readiness = 'VERIFICATION_FAILED';
+      } else if (unansweredQuestions.length > 0) {
+        readiness = 'NEEDS_INPUT';
+      } else if (topRisks.some((r) => r.severity === 'critical')) {
+        readiness = 'HIGH_RISK';
+      } else if (run.state === 'READY_FOR_IMPLEMENTATION' || run.state === 'ANALYSIS_COMPLETE') {
+        readiness = 'READY_TO_BUILD';
+      }
+
+      // Verification / proof status
+      const proofStatus = latestSession?.verificationRunResult?.overallStatus || (run.state === 'VERIFIED' ? 'VERIFIED' : run.state === 'VERIFICATION_FAILED' ? 'FAILED' : 'NOT_RUN');
+
+      return res.json({
+        success: true,
+        summary: {
+          runId: run.id,
+          title: run.title,
+          state: run.state,
+          readiness,
+          executiveSummary,
+          topRisks,
+          blockingQuestions: unansweredQuestions,
+          answeredQuestions: answers,
+          buildStatus: latestSession?.status || 'NOT_STARTED',
+          proofStatus,
+          changedFiles: latestSession?.changedFiles || [],
+          latestSessionId: latestSession?.id,
+          hasRepair: Boolean(latestSession?.repairRunResult),
+          isRepaired: Boolean(latestSession?.repairRunResult?.isRepaired),
+        },
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   app.patch('/api/runs/:runId', (req: Request, res: Response) => {
     try {
       const runId = req.params.runId;

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useOutletContext, Link, useNavigate } from 'react-router-dom';
 import {
   ShieldAlert,
@@ -8,50 +8,26 @@ import {
   ExternalLink,
   Sparkles,
   Info,
+  Check,
+  Zap,
+  Play,
 } from 'lucide-react';
 import { AnalysisRunRecord } from '../types';
-import { ConcernCandidate } from '@architectai/domain';
 import { useRuns } from '../store/runs';
+import { RiskCard } from '../components/ui/RiskCard';
+import { DecisionCard } from '../components/ui/DecisionCard';
+import { UserDecisionsView } from '../components/ui/UserDecisionsView';
+import { StatusBadge } from '../components/ui/StatusBadge';
 
 interface RunContext {
   run: AnalysisRunRecord;
   onOpenEvidence: () => void;
 }
 
-function getSeverity(concern: ConcernCandidate): {
-  level: 'critical' | 'high' | 'medium' | 'low';
-  label: string;
-} {
-  if (concern.confidence >= 0.9) return { level: 'critical', label: 'CRITICAL' };
-  if (concern.confidence >= 0.8) return { level: 'high', label: 'HIGH' };
-  if (concern.confidence >= 0.65) return { level: 'medium', label: 'MEDIUM' };
-  return { level: 'low', label: 'LOW' };
-}
-
-function getRecommendation(concern: ConcernCandidate): string {
-  const t = concern.title.toLowerCase();
-  if (t.includes('rate') || t.includes('burst') || t.includes('window')) {
-    return 'Implement an atomic sliding window counter with a shared memory store and local token-bucket buffering.';
-  }
-  if (t.includes('refresh') || t.includes('token') || t.includes('race')) {
-    return 'Use a single in-flight refresh promise with synchronized queued replay for all pending requests.';
-  }
-  if (t.includes('memory') || t.includes('buffer') || t.includes('exhaustion') || t.includes('stream')) {
-    return 'Enforce stream-level backpressure (highWaterMark) and cap concurrent worker tasks with a bounded buffer.';
-  }
-  if (t.includes('pool') || t.includes('connection')) {
-    return 'Configure connection pool acquisition timeouts, query cancellation, and circuit breaking for tail queries.';
-  }
-  if (t.includes('idempot') || t.includes('payment') || t.includes('duplicate')) {
-    return 'Generate unique idempotency keys per operation and enforce transactional deduplication before charging.';
-  }
-  return 'Establish an explicit bounded queue, transactional isolation, and independent verification tests.';
-}
-
 export const ReviewPage: React.FC = () => {
   const { run, onOpenEvidence } = useOutletContext<RunContext>();
-  const { recordQuestionAnswer } = useRuns();
   const navigate = useNavigate();
+
   if (!run.result || !run.result.contract) {
     return (
       <div className="review-page-layout">
@@ -67,6 +43,7 @@ export const ReviewPage: React.FC = () => {
 
   const contract = run.result.contract;
   const concerns = contract.discoveredConcerns;
+  const decisions = contract.decisions;
 
   const criticalCount = concerns.filter((c) => c.confidence >= 0.9).length;
   const highCount = concerns.filter((c) => c.confidence >= 0.8 && c.confidence < 0.9).length;
@@ -75,6 +52,14 @@ export const ReviewPage: React.FC = () => {
 
   const allQuestions = concerns.flatMap((c) => c.unresolvedQuestions || []);
   const uniqueQuestions = Array.from(new Set(allQuestions));
+  const hasUnansweredQuestions = uniqueQuestions.some((q) => !run.userAnswers?.[q]);
+
+  // Overall readiness status
+  const readiness = hasUnansweredQuestions
+    ? 'NEEDS_INPUT'
+    : criticalCount > 0
+    ? 'HIGH_RISK'
+    : 'READY_TO_BUILD';
 
   return (
     <div className="review-page-layout">
@@ -82,10 +67,38 @@ export const ReviewPage: React.FC = () => {
       <section className="review-hero">
         <div className="review-hero-top">
           <span className="review-tag font-mono">Architecture Review</span>
+          <div className="readiness-pill-wrapper">
+            {readiness === 'READY_TO_BUILD' && (
+              <span className="readiness-pill ready font-mono">
+                <CheckCircle2 size={13} className="text-success" />
+                <span>Ready to build</span>
+              </span>
+            )}
+            {readiness === 'NEEDS_INPUT' && (
+              <span className="readiness-pill input font-mono">
+                <HelpCircle size={13} className="text-warning" />
+                <span>Needs your input</span>
+              </span>
+            )}
+            {readiness === 'HIGH_RISK' && (
+              <span className="readiness-pill risk font-mono">
+                <ShieldAlert size={13} className="text-danger" />
+                <span>High engineering risk</span>
+              </span>
+            )}
+          </div>
         </div>
+
         <h1 className="review-title">
           {concerns.length} engineering {concerns.length === 1 ? 'risk' : 'risks'} identified
         </h1>
+
+        <p className="review-executive-summary">
+          ArchitectAI analyzed your requirement across universal engineering dimensions (concurrency, bounded resources, failure of dependencies, and side effects).
+          {criticalCount > 0
+            ? ` Found ${criticalCount} critical failure mode(s) that require bounded mitigation before implementation.`
+            : ` The engineering architecture is verified and ready for bounded coding agent implementation.`}
+        </p>
 
         <div className="severity-summary-strip font-mono">
           {criticalCount > 0 && <span className="severity-chip critical">{criticalCount} Critical</span>}
@@ -95,114 +108,114 @@ export const ReviewPage: React.FC = () => {
         </div>
 
         <div className="user-requirement-callout">
-          <span className="req-label">Your requirement</span>
+          <span className="req-label font-mono">YOUR REQUIREMENT</span>
           <p className="req-text">"{contract.requirement.rawIntent}"</p>
         </div>
       </section>
 
-      {/* Unresolved Questions Section if available */}
+      {/* Decisions Needed from User (Interactive) */}
       {uniqueQuestions.length > 0 && (
-        <section className="interactive-questions-section">
-          <div className="questions-header">
-            <HelpCircle size={18} className="icon-warning" />
+        <UserDecisionsView
+          runId={run.id}
+          questions={uniqueQuestions}
+          userAnswers={run.userAnswers || {}}
+        />
+      )}
+
+      {/* Discovered Engineering Risks */}
+      <section className="findings-section" aria-labelledby="risks-heading">
+        <div className="findings-section-header">
+          <div className="header-text-group">
+            <h2 id="risks-heading" className="section-heading">Discovered Systems Risks</h2>
+            <p className="text-secondary">
+              Universal failure modes inferred from your intent that were not mentioned in the prompt.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn-ghost font-mono evidence-global-btn"
+            onClick={onOpenEvidence}
+          >
+            <Sparkles size={13} className="icon-brand" />
+            <span>Technical Evidence Graph</span>
+          </button>
+        </div>
+
+        <div className="findings-stack">
+          {concerns.map((concern) => (
+            <RiskCard
+              key={concern.id}
+              concern={concern}
+              onOpenEvidence={onOpenEvidence}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* Recommended Decisions Summary */}
+      {decisions.length > 0 && (
+        <section className="review-decisions-section" aria-labelledby="decisions-summary-heading">
+          <div className="section-header-row">
             <div>
-              <h3>ArchitectAI needs {uniqueQuestions.length} {uniqueQuestions.length === 1 ? 'detail' : 'details'} to refine choices</h3>
-              <p className="text-secondary">Your answers eliminate assumptions and adjust verification requirements.</p>
+              <h2 id="decisions-summary-heading" className="section-heading">
+                Recommended Architecture Approach ({decisions.length})
+              </h2>
+              <p className="text-secondary">
+                Structural decisions formulated to eliminate the discovered failure modes.
+              </p>
             </div>
           </div>
 
-          <div className="questions-grid">
-            {uniqueQuestions.map((q, idx) => {
-              const currentAnswer = run.userAnswers?.[q];
-              return (
-                <div key={idx} className="question-item-card">
-                  <p className="question-text">{q}</p>
-                  <div className="question-options-row">
-                    {['Yes', 'No', "I'm not sure"].map((option) => (
-                      <button
-                        key={option}
-                        type="button"
-                        className={`btn-choice ${currentAnswer === option ? 'selected' : ''}`}
-                        onClick={() => recordQuestionAnswer(run.id, q, option)}
-                      >
-                        {currentAnswer === option && <CheckCircle2 size={13} className="icon-success" />}
-                        <span>{option}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
+          <div className="decisions-cards-grid">
+            {decisions.map((decision) => (
+              <DecisionCard
+                key={decision.id}
+                decision={decision}
+              />
+            ))}
           </div>
         </section>
       )}
 
-      {/* Findings Ranked by Importance */}
-      <section className="findings-section">
-        <div className="findings-section-header">
-          <h2>Discovered Systems Risks</h2>
-          <p>
-            Universal engineering concerns inferred from your requirements that were not explicitly mentioned.
+      {/* Ready-to-Build Gate */}
+      <section className="ready-to-build-banner">
+        <div className="gate-text-group">
+          <div className="gate-title-row">
+            <CheckCircle2 size={18} className="text-success" />
+            <h3 className="gate-title">Ready for Bounded Implementation</h3>
+          </div>
+          <p className="gate-desc">
+            ArchitectAI will execute the coding agent inside an isolated Git worktree. Your working branch is protected.
+            Independent verification will prove whether the implementation holds up before any code touches your repository.
           </p>
         </div>
 
-        <div className="findings-stack">
-          {concerns.map((concern, idx) => {
-            const severity = getSeverity(concern);
-            const recommendation = getRecommendation(concern);
-            const isGrounded = concern.groundingStatus !== 'ungrounded_model_discovery';
+        <div className="gate-action-buttons">
+          <button
+            type="button"
+            className="btn-secondary"
+            onClick={() => navigate(`/runs/${run.id}/architecture`)}
+          >
+            <span>Continue to Architecture</span>
+            <ArrowRight size={15} />
+          </button>
 
-            return (
-              <div key={concern.id} className="finding-row-card">
-                <div className="finding-row-header">
-                  <div className="finding-badge-group">
-                    <span className={`severity-tag ${severity.level}`}>
-                      {severity.label}
-                    </span>
-                    <span className="confidence-tag font-mono">
-                      {Math.round(concern.confidence * 100)}% Confidence
-                    </span>
-                    <span className={`grounded-tag ${isGrounded ? 'grounded' : 'ungrounded'}`}>
-                      {isGrounded ? '✓ Grounded' : 'Model Discovered'}
-                    </span>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="btn-link-evidence font-mono"
-                    onClick={onOpenEvidence}
-                    title="Open technical causal trail"
-                  >
-                    <span>[Why ArchitectAI found this]</span>
-                    <ExternalLink size={12} />
-                  </button>
-                </div>
-
-                <h3 className="finding-title">{concern.title}</h3>
-                <p className="finding-explanation">{concern.description}</p>
-
-                {/* Plain-Language Consequence / Impact */}
-                <div className="finding-impact-callout">
-                  <span className="callout-label">Impact</span>
-                  <p className="callout-body">{concern.applicabilityReason}</p>
-                </div>
-
-                {/* Recommended Direction */}
-                <div className="finding-recommendation-callout">
-                  <span className="callout-label">Recommended direction</span>
-                  <p className="callout-body">{recommendation}</p>
-                </div>
-              </div>
-            );
-          })}
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => navigate(`/runs/${run.id}/implementation`)}
+          >
+            <Play size={14} />
+            <span>Prepare Implementation</span>
+          </button>
         </div>
       </section>
 
-      {/* Bottom Sequential Workflow Action */}
+      {/* Bottom Sequential Workflow Bar */}
       <div className="review-footer-bar">
         <div className="footer-bar-summary">
-          <span>Step 1 of 4 completed</span>
-          <span className="font-mono text-muted">• Proceed to review concrete architecture choices</span>
+          <span>Step 1 of 5 completed</span>
+          <span className="font-mono text-muted">• Review risks and proceed to architecture or implementation</span>
         </div>
 
         <button

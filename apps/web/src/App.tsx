@@ -9,6 +9,7 @@ import { ReviewPage } from './pages/ReviewPage';
 import { ArchitecturePage } from './pages/ArchitecturePage';
 import { VerificationPage } from './pages/VerificationPage';
 import { ImplementationPage } from './pages/ImplementationPage';
+import { ChangesPage } from './pages/ChangesPage';
 import { ExamplesModal } from './components/layout/ExamplesModal';
 import './App.css';
 
@@ -32,7 +33,10 @@ export function App() {
               <Route index element={<ReviewPage />} />
               <Route path="architecture" element={<ArchitecturePage />} />
               <Route path="verification" element={<VerificationPage />} />
+              <Route path="proof" element={<VerificationPage />} />
               <Route path="implementation" element={<ImplementationPage />} />
+              <Route path="build" element={<ImplementationPage />} />
+              <Route path="changes" element={<ChangesPage />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

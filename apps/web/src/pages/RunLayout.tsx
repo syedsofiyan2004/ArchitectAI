@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useParams, NavLink, Outlet, Link, useNavigate } from 'react-router-dom';
+import { useParams, NavLink, Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   ArrowLeft,
   Network,
@@ -20,6 +20,7 @@ export const RunLayout: React.FC = () => {
   const { runId } = useParams<{ runId: string }>();
   const { getRun, updateRun } = useRuns();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [isEvidenceOpen, setIsEvidenceOpen] = useState(false);
   const [evidenceTab, setEvidenceTab] = useState<'knowledge' | 'contract' | 'assumptions'>('knowledge');
@@ -206,7 +207,7 @@ export const RunLayout: React.FC = () => {
 
           <NavLink
             to={`/runs/${run.id}/verification`}
-            className={({ isActive }) => `step-link ${isActive ? 'active' : ''}`}
+            className={({ isActive }) => `step-link ${isActive || location.pathname.endsWith('/proof') ? 'active' : ''}`}
           >
             <span>3. Verify</span>
             <span className="step-badge font-mono">{specsCount}</span>
@@ -214,10 +215,18 @@ export const RunLayout: React.FC = () => {
 
           <NavLink
             to={`/runs/${run.id}/implementation`}
-            className={({ isActive }) => `step-link ${isActive ? 'active' : ''}`}
+            className={({ isActive }) => `step-link ${isActive || location.pathname.endsWith('/build') ? 'active' : ''}`}
           >
             <span>4. Implement</span>
             <span className="step-badge font-mono">EXEC</span>
+          </NavLink>
+
+          <NavLink
+            to={`/runs/${run.id}/changes`}
+            className={({ isActive }) => `step-link ${isActive ? 'active' : ''}`}
+          >
+            <span>5. Changes</span>
+            <span className="step-badge font-mono">DIFF</span>
           </NavLink>
         </nav>
 

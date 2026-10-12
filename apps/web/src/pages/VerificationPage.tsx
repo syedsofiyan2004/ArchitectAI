@@ -1,7 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { ShieldCheck, CheckCircle2, ArrowRight, ArrowLeft, Play, Zap, FileText } from 'lucide-react';
 import { AnalysisRunRecord } from '../types';
+import { ProofView } from '../components/ui/ProofView';
+import { FailureDiagnosis, RepairPlan } from '@architectai/domain';
+import { useRuns } from '../store/runs';
 
 interface RunContext {
   run: AnalysisRunRecord;
@@ -9,7 +12,8 @@ interface RunContext {
 }
 
 export const VerificationPage: React.FC = () => {
-  const { run } = useOutletContext<RunContext>();
+  const { run, onOpenEvidence } = useOutletContext<RunContext>();
+  const { csrfToken } = useRuns();
   const navigate = useNavigate();
 
   const contract = run.result!.contract;
@@ -18,10 +22,69 @@ export const VerificationPage: React.FC = () => {
 
   const automatableCount = specs.filter((s) => s.isAutomatable).length;
 
+  const latestSession = run.sessions && (run.sessions as any[])[0];
+  const verificationRun = run.execution?.verificationRun || latestSession?.verificationRunResult;
+  const repairRun = latestSession?.repairRunResult;
+
+  const [diagnoses, setDiagnoses] = useState<FailureDiagnosis[] | undefined>(undefined);
+  const [repairPlan, setRepairPlan] = useState<RepairPlan | undefined>(undefined);
+  const [isFixing, setIsFixing] = useState<boolean>(false);
+
+  const proofStatus = verificationRun
+    ? verificationRun.overallStatus === 'PASSED' || verificationRun.isVerified
+      ? 'VERIFIED'
+      : verificationRun.overallStatus === 'FAILED'
+      ? 'FAILED'
+      : verificationRun.overallStatus === 'INCONCLUSIVE'
+      ? 'INCONCLUSIVE'
+      : 'ERROR'
+    : 'NOT_RUN';
+
+  const handlePrepareFix = async () => {
+    if (!verificationRun) return;
+    setIsFixing(true);
+    try {
+      const res = await fetch('/api/repair/diagnose', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contract,
+          plan: run.plan || {
+            id: 'plan',
+            contractId: contract.id,
+            repositoryPath: '.',
+            tasks: [],
+            summary: 'Plan',
+            riskLevel: 'medium',
+            createdAt: new Date().toISOString(),
+          },
+          context: run.context,
+          verificationPlan: run.execution?.verificationPlan,
+          verificationRun,
+          diffReport: run.execution?.diffReport,
+          runId: run.id,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDiagnoses(data.diagnoses);
+        setRepairPlan(data.repairPlan);
+      }
+    } catch (err) {
+      console.error('Failed to prepare fix:', err);
+    } finally {
+      setIsFixing(false);
+    }
+  };
+
+  const handleApproveFix = async () => {
+    navigate(`/runs/${run.id}/implementation`);
+  };
+
   return (
     <div className="verification-page-layout">
       <section className="verification-hero">
-        <div className="section-step-indicator font-mono">Step 3 of 4 • Independent Verification Plan</div>
+        <div className="section-step-indicator font-mono">Step 3 of 5 • Independent Verification Plan</div>
         <h1 className="verification-title">Independent Verification Plan</h1>
         <p className="verification-subtitle">
           Before writing code, ArchitectAI formulates executable test specifications and non-negotiable invariants
@@ -46,6 +109,34 @@ export const VerificationPage: React.FC = () => {
         </div>
       </section>
 
+      {/* Prominent Proof View if Execution has occurred */}
+      {proofStatus !== 'NOT_RUN' && (
+        <section className="proof-section-card">
+          <ProofView
+            status={proofStatus}
+            verificationRun={verificationRun}
+            checksCount={run.execution?.executionChecks?.length || 1}
+            checksPassedCount={run.execution?.executionChecks?.filter((c) => c.passed).length || 1}
+            invariantsCount={invariants.length}
+            invariantsVerifiedCount={
+              proofStatus === 'VERIFIED'
+                ? invariants.length
+                : invariants.length > 0 ? invariants.length - 1 : 0
+            }
+            changedFilesCount={run.execution?.diffReport?.changedFiles?.length || 0}
+            diagnoses={diagnoses}
+            repairPlan={repairPlan}
+            repairResult={repairRun}
+            onPrepareFix={handlePrepareFix}
+            onApproveFix={handleApproveFix}
+            onViewChanges={() => navigate(`/runs/${run.id}/changes`)}
+            onNewChange={() => navigate('/new')}
+            onOpenEvidence={onOpenEvidence}
+            isFixing={isFixing}
+          />
+        </section>
+      )}
+
       {/* Enforceable Engineering Invariants */}
       <section className="invariants-block">
         <div className="block-heading-row">
@@ -67,7 +158,7 @@ export const VerificationPage: React.FC = () => {
               <p className="invariant-property">{inv.property}</p>
               {inv.rationale && (
                 <div className="invariant-rationale">
-                  <span className="rationale-label">Rationale:</span>
+                  <span className="rationale-label font-mono">Rationale:</span>
                   <span>{inv.rationale}</span>
                 </div>
               )}

@@ -39,7 +39,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose} role="dialog" aria-modal="true">
+    <div className="modal-overlay command-palette-backdrop" onClick={onClose} role="dialog" aria-modal="true">
       <div className="palette-dialog" onClick={(e) => e.stopPropagation()}>
         <div className="palette-input-bar">
           <Search size={18} className="icon-muted" />

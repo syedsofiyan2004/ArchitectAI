@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
-import { Plus, Search, Server, Sparkles, Terminal } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Sidebar } from './Sidebar';
+import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
-import { SystemStatusModal } from './SystemStatusModal';
+import { SettingsModal } from './SettingsModal';
+import { ProjectModal } from './ProjectModal';
+import { ConnectRepoModal } from './ConnectRepoModal';
 import { ExamplesModal } from './ExamplesModal';
+import { SystemStatusModal } from './SystemStatusModal';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -11,11 +15,14 @@ interface AppShellProps {
 
 export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
-  const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [isConnectRepoOpen, setIsConnectRepoOpen] = useState(false);
   const [isExamplesOpen, setIsExamplesOpen] = useState(false);
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const navigate = useNavigate();
-  const location = useLocation();
 
   // Global keyboard shortcuts (Cmd+K for palette, N for new analysis when not in input)
   useEffect(() => {
@@ -25,8 +32,12 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         setIsPaletteOpen((prev) => !prev);
       } else if (e.key === 'Escape') {
         setIsPaletteOpen(false);
-        setIsStatusOpen(false);
+        setIsSettingsOpen(false);
+        setIsProjectModalOpen(false);
+        setIsConnectRepoOpen(false);
         setIsExamplesOpen(false);
+        setIsStatusOpen(false);
+        setIsMobileSidebarOpen(false);
       } else if (e.key === 'n' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
         if (!e.metaKey && !e.ctrlKey && !e.altKey) {
           e.preventDefault();
@@ -39,81 +50,58 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
 
-  const isHome = location.pathname === '/';
-
   return (
     <div className="product-shell">
-      <header className="product-header" role="banner">
-        <div className="header-left">
-          <Link to="/" className="brand-link" title="ArchitectAI Home">
-            <div className="brand-symbol">
-              <Terminal size={16} />
+      {/* Mobile backdrop */}
+      {isMobileSidebarOpen && (
+        <div
+          className="sidebar-backdrop"
+          onClick={() => setIsMobileSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      {/* Left Workspace Sidebar */}
+      <Sidebar
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenNewProject={() => setIsProjectModalOpen(true)}
+        isMobileOpen={isMobileSidebarOpen}
+        onCloseMobile={() => setIsMobileSidebarOpen(false)}
+      />
+
+      {/* Workspace Main Area */}
+      <div className="workspace-main-column">
+        {/* Workspace Top Bar */}
+        <TopBar
+          onOpenPalette={() => setIsPaletteOpen(true)}
+          onOpenExamples={() => setIsExamplesOpen(true)}
+          onOpenConnectRepo={() => setIsConnectRepoOpen(true)}
+          onToggleMobileSidebar={() => setIsMobileSidebarOpen((prev) => !prev)}
+        />
+
+        {/* Workspace Route Content */}
+        <main className="product-main">
+          {children}
+        </main>
+
+        {/* Minimal Subtle Workspace Footer */}
+        <footer className="product-footer">
+          <div className="footer-container">
+            <span className="footer-copy">
+              ArchitectAI • Engineering intelligence for AI-built software
+            </span>
+            <div className="footer-links font-mono">
+              <span>Provider Neutral</span>
+              <span>•</span>
+              <span>Three-Level Grounding</span>
+              <span>•</span>
+              <span>Independent Verification</span>
             </div>
-            <span className="brand-text">ArchitectAI</span>
-          </Link>
-        </div>
-
-        <div className="header-center">
-          <button
-            type="button"
-            className="search-trigger-btn font-mono"
-            onClick={() => setIsPaletteOpen(true)}
-            title="Search and commands (Cmd+K)"
-          >
-            <Search size={14} className="icon-muted" />
-            <span>Search or jump to...</span>
-            <kbd className="kbd-shortcut font-mono">⌘K</kbd>
-          </button>
-        </div>
-
-        <div className="header-right">
-          <button
-            type="button"
-            className="header-action-btn"
-            onClick={() => setIsExamplesOpen(true)}
-            title="Browse curated architecture examples"
-          >
-            <Sparkles size={14} className="icon-brand" />
-            <span>Examples</span>
-          </button>
-
-          <Link to="/new" className="btn-primary-header">
-            <Plus size={15} />
-            <span>New Analysis</span>
-          </Link>
-
-          <button
-            type="button"
-            className="status-trigger-dot"
-            onClick={() => setIsStatusOpen(true)}
-            title="Engine Kernel Status & Telemetry"
-            aria-label="System status"
-          >
-            <span className="dot-live"></span>
-          </button>
-        </div>
-      </header>
-
-      <main className="product-main">
-        {children}
-      </main>
-
-      <footer className="product-footer">
-        <div className="footer-container">
-          <span className="footer-copy">
-            ArchitectAI • Engineering intelligence for AI-built software
-          </span>
-          <div className="footer-links font-mono">
-            <span>Provider Neutral</span>
-            <span>•</span>
-            <span>Three-Level Grounding</span>
-            <span>•</span>
-            <span>Independent Verification</span>
           </div>
-        </div>
-      </footer>
+        </footer>
+      </div>
 
-      {/* Global Modals */}
+      {/* Global Application Modals */}
       <CommandPalette
         isOpen={isPaletteOpen}
         onClose={() => setIsPaletteOpen(false)}
@@ -127,14 +115,29 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         }}
       />
 
-      <SystemStatusModal
-        isOpen={isStatusOpen}
-        onClose={() => setIsStatusOpen(false)}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
+
+      <ProjectModal
+        isOpen={isProjectModalOpen}
+        onClose={() => setIsProjectModalOpen(false)}
+      />
+
+      <ConnectRepoModal
+        isOpen={isConnectRepoOpen}
+        onClose={() => setIsConnectRepoOpen(false)}
       />
 
       <ExamplesModal
         isOpen={isExamplesOpen}
         onClose={() => setIsExamplesOpen(false)}
+      />
+
+      <SystemStatusModal
+        isOpen={isStatusOpen}
+        onClose={() => setIsStatusOpen(false)}
       />
     </div>
   );
