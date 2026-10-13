@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
-import { X, FolderGit2, Sparkles, FolderPlus } from 'lucide-react';
+import { FolderPlus } from 'lucide-react';
 import { useRuns } from '../../store/runs';
+import { Modal, ModalHeader, ModalBody, ModalFooter } from '../ui/Modal';
+import { FormField, Label, Input, FormHint, FormError } from '../ui/FormField';
+import { Button } from '../ui/Button';
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -33,7 +36,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       const project = await createProject(name.trim(), description.trim() || undefined);
       if (repoPath.trim()) {
         try {
-          await registerRepository(repoPath.trim());
+          await registerRepository(project.id, repoPath.trim());
         } catch (repoErr) {
           console.warn('Repository registration failed during project creation', repoErr);
         }
@@ -53,78 +56,94 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   };
 
   return (
-    <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="new-project-title">
-      <div className="modal-content project-modal-box">
-        <div className="modal-header">
-          <div className="modal-title-with-icon">
-            <FolderPlus size={18} className="text-brand" />
-            <h3 id="new-project-title" className="modal-title">Create New Project</h3>
-          </div>
-          <button type="button" className="btn-icon" onClick={onClose} aria-label="Close dialog">
-            <X size={18} />
-          </button>
-        </div>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      size="md"
+      maxWidth="560px"
+      ariaLabelledBy="new-project-title"
+      backdropClassName="project-modal-backdrop"
+      className="project-modal-box"
+    >
+      <form onSubmit={handleSubmit} className="project-form-container">
+        <ModalHeader
+          title="Create New Project"
+          titleId="new-project-title"
+          icon={<FolderPlus size={18} className="text-brand" />}
+          onClose={onClose}
+        />
 
-        <form onSubmit={handleSubmit} className="project-form">
-          {error && <div className="form-error-banner">{error}</div>}
+        <ModalBody>
+          {error && <FormError>{error}</FormError>}
 
-          <div className="form-group">
-            <label htmlFor="project-name-input" className="form-label">Project Name *</label>
-            <input
+          <FormField>
+            <Label htmlFor="project-name-input" required>
+              Project Name
+            </Label>
+            <Input
               id="project-name-input"
               type="text"
               required
               autoFocus
-              className="input text-input"
               placeholder="e.g. Payments Gateway, Auth Service"
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
-          </div>
+          </FormField>
 
-          <div className="form-group">
-            <label htmlFor="project-desc-input" className="form-label">Description (Optional)</label>
-            <input
+          <FormField>
+            <Label htmlFor="project-desc-input">
+              Description (Optional)
+            </Label>
+            <Input
               id="project-desc-input"
               type="text"
-              className="input text-input"
               placeholder="Brief description of the service or system"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />
-          </div>
+            <FormHint>
+              Help ArchitectAI evaluate domain and operational constraints.
+            </FormHint>
+          </FormField>
 
-          <div className="form-group">
-            <label htmlFor="project-repo-input" className="form-label">
+          <FormField>
+            <Label htmlFor="project-repo-input">
               Local Git Repository Path (Optional)
-            </label>
-            <input
+            </Label>
+            <Input
               id="project-repo-input"
               type="text"
-              className="input text-input font-mono"
+              className="font-mono"
               placeholder="e.g. D:\projects\payments-api or ./repos/auth"
               value={repoPath}
               onChange={(e) => setRepoPath(e.target.value)}
             />
-            <span className="form-hint">
-              You can connect a Git repository now or later when ready to execute changes.
-            </span>
-          </div>
+            <FormHint>
+              Connect a Git repository now or later when ready to execute changes.
+            </FormHint>
+          </FormField>
+        </ModalBody>
 
-          <div className="modal-actions">
-            <button type="button" className="btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="btn-primary"
-              disabled={!name.trim() || isSubmitting}
-            >
-              {isSubmitting ? 'Creating...' : 'Create Project'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <ModalFooter>
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={onClose}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </Button>
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!name.trim() || isSubmitting}
+            isLoading={isSubmitting}
+          >
+            {isSubmitting ? 'Creating...' : 'Create Project'}
+          </Button>
+        </ModalFooter>
+      </form>
+    </Modal>
   );
 };

@@ -42,6 +42,9 @@ export const BuildPlanView: React.FC<BuildPlanViewProps> = ({
   const [acknowledgedSafety, setAcknowledgedSafety] = useState(false);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
+  const codexAgent = agents.find((a) => a.id === 'codex-cli');
+  const isCodexUnavailable = codexAgent ? !codexAgent.available : false;
+
   const selectedAgent = agents.find((a) => a.id === selectedAgentId) || {
     id: selectedAgentId,
     name: selectedAgentId === 'codex-cli' ? 'Codex CLI' : 'Deterministic Agent',
@@ -61,7 +64,7 @@ export const BuildPlanView: React.FC<BuildPlanViewProps> = ({
     <div className="build-plan-container">
       <div className="build-plan-header">
         <div>
-          <span className="build-plan-kicker">Step 4 • Build Plan</span>
+          <span className="build-plan-kicker font-mono">Step 4 • Build Plan</span>
           <h2 className="build-plan-title">Implementation Tasks</h2>
           <p className="build-plan-subtitle">
             ArchitectAI prepared {tasks.length} bounded tasks for your coding agent to implement the approved design.
@@ -75,8 +78,66 @@ export const BuildPlanView: React.FC<BuildPlanViewProps> = ({
           disabled={isStartingBuild}
         >
           <Play size={15} />
-          <span>Start Build</span>
+          <span>{isStartingBuild ? 'Starting...' : 'Start Build'}</span>
         </button>
+      </div>
+
+      {/* Agent Selection Card per Requirement 6 */}
+      <div
+        className="plan-agent-select-card"
+        style={{
+          margin: '16px 0',
+          padding: '14px 18px',
+          background: 'var(--card-bg, #161b22)',
+          border: '1px solid var(--border-color, #30363d)',
+          borderRadius: '8px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          flexWrap: 'wrap',
+          gap: '12px',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <Terminal size={18} className="text-brand" />
+          <div>
+            <label htmlFor="plan-agent-select" style={{ fontSize: '13px', fontWeight: 600, color: '#fff', display: 'block' }}>
+              Coding Agent Adapter
+            </label>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted, #8b949e)', margin: '2px 0 0' }}>
+              Autonomous coding agent executing changes inside an isolated temporary Git worktree.
+            </p>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+          <select
+            id="plan-agent-select"
+            value={selectedAgentId}
+            onChange={(e) => onSelectAgent(e.target.value)}
+            style={{
+              padding: '6px 12px',
+              background: 'var(--bg-dark, #0d1117)',
+              border: '1px solid var(--border-color, #30363d)',
+              borderRadius: '6px',
+              color: '#fff',
+              fontSize: '13px',
+              fontFamily: 'monospace',
+            }}
+          >
+            {agents.map((a) => (
+              <option key={a.id} value={a.id} disabled={!a.available}>
+                {a.name} {a.available ? (a.version ? `(v${a.version})` : '(Ready)') : `[Unavailable: ${a.reason || 'Missing'}]`}
+              </option>
+            ))}
+          </select>
+
+          {isCodexUnavailable && (
+            <span className="text-warning font-mono" style={{ fontSize: '11px' }}>
+              Codex CLI not detected in PATH. Using deterministic demo agent.
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="build-tasks-list">

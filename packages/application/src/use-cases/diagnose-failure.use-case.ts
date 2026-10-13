@@ -113,7 +113,7 @@ Discovered Concerns:
 ${concerns.map((c) => `- ${c.id}: ${c.title}`).join('\n')}
 
 Relevant Repository Context Files:
-${context.relevantFiles.join('\n')}
+${context?.relevantFiles ? context.relevantFiles.join('\n') : 'None'}
 
 Changed Files in Diff:
 ${diffReport?.changedFiles.join('\n') || 'None'}

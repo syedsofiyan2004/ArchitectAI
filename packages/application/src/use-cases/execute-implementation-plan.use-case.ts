@@ -23,6 +23,12 @@ export interface PlanExecutionOptions {
   allowDirtyRepo?: boolean;
   signal?: AbortSignal;
   budgets?: Partial<ExecutionTimeBudgets>;
+  onProgress?: (progress: {
+    stage: 'PREPARING_WORKTREE' | 'RUNNING_AGENT' | 'RUNNING_NATIVE_CHECKS' | 'RUNNING_VERIFICATION' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+    currentTask?: string;
+    completedTasks?: string[];
+    message?: string;
+  }) => void;
 }
 
 export interface PlanExecutionOutput {
@@ -143,6 +149,11 @@ export class ExecuteImplementationPlanUseCase {
     const adapter = agentEntry.adapter;
 
     // Step 1: Create isolated Git worktree
+    options?.onProgress?.({
+      stage: 'PREPARING_WORKTREE',
+      completedTasks: [],
+      message: 'Creating isolated Git worktree sandbox...',
+    });
     const worktreeSession = await this.gitIsolation.createIsolatedWorktree(
       plan.repositoryPath,
       runId
@@ -165,6 +176,13 @@ export class ExecuteImplementationPlanUseCase {
           (err as any).code = 'USER_CANCELLED';
           throw err;
         }
+
+        options?.onProgress?.({
+          stage: 'RUNNING_AGENT',
+          currentTask: task.title,
+          completedTasks: taskResults.map((t) => t.taskId),
+          message: `Coding agent executing task: ${task.title}`,
+        });
 
         task.status = 'in_progress';
 
@@ -225,6 +243,11 @@ export class ExecuteImplementationPlanUseCase {
       // Step 3: Run PRE-SNAPSHOTTED repository-native checks inside the worktree.
       // Uses the check specs captured from the ORIGINAL repo BEFORE agent modification.
       // This prevents agent-modified package.json from introducing new or malicious commands.
+      options?.onProgress?.({
+        stage: 'RUNNING_NATIVE_CHECKS',
+        completedTasks: orderedTasks.map((t) => t.id),
+        message: 'Running pre-agent snapshotted native checks...',
+      });
       const executionChecks = await this.executionChecks.runSnapshotChecks(
         worktreeSession.worktreePath,
         preAgentCheckSpecs.map((s) => ({ ...s, timeoutMs: budgets.nativeCheckMs })),
@@ -238,25 +261,33 @@ export class ExecuteImplementationPlanUseCase {
       let verificationRun: VerificationRunResult | undefined;
 
       if (contract) {
-        const emptyContext: RepositoryContext = context || {
-          repositoryPath: plan.repositoryPath,
-          relevantFiles: [],
-          relevantDirectories: [],
-          relevantManifests: [],
-          probableEntryPoints: [],
-          existingTests: [],
-          implementationObservations: [],
-          unresolvedQuestions: [],
-          filesInspected: 0,
-          filesOmitted: 0,
-          contextBytes: 0,
-        };
+        const repoContext: RepositoryContext = (context && Array.isArray((context as any).relevantFiles))
+          ? context
+          : {
+              repositoryPath: plan.repositoryPath,
+              relevantFiles: [],
+              relevantDirectories: [],
+              relevantManifests: [],
+              probableEntryPoints: [],
+              existingTests: [],
+              implementationObservations: [],
+              unresolvedQuestions: [],
+              filesInspected: 0,
+              filesOmitted: 0,
+              contextBytes: 0,
+            };
 
         verificationPlan = await this.planCompiler.execute(
           contract,
-          emptyContext,
+          repoContext,
           plan
         );
+
+        options?.onProgress?.({
+          stage: 'RUNNING_VERIFICATION',
+          completedTasks: orderedTasks.map((t) => t.id),
+          message: 'Running independent adversarial verification tests...',
+        });
 
         verificationRun = await this.verifier.execute(verificationPlan, {
           repositoryPath: plan.repositoryPath,
@@ -315,6 +346,12 @@ export class ExecuteImplementationPlanUseCase {
           ? 'VERIFICATION_ERROR'
           : 'VERIFICATION_FAILED';
       }
+
+      options?.onProgress?.({
+        stage: status,
+        completedTasks: orderedTasks.map((t) => t.id),
+        message: status === 'COMPLETED' ? 'Build and verification completed successfully.' : 'Verification disproved implementation.',
+      });
 
       return {
         plan,

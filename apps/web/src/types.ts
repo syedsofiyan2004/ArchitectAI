@@ -126,6 +126,7 @@ export interface AnalysisRunRecord {
   execution?: PlanExecutionOutput;
   // User answers to unresolved questions
   userAnswers?: Record<string, string>;
+  contractRevision?: number;
   revisions?: unknown[];
   sessions?: unknown[];
   artifacts?: unknown[];

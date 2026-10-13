@@ -6,7 +6,12 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { execSync } from 'node:child_process';
 
+import * as os from 'node:os';
+
 describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
+  let tempDir: string;
+  let dbPath: string;
+  let artifactsDir: string;
   let server: Server;
   let baseUrl: string;
   let browser: Browser | null = null;
@@ -18,7 +23,11 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
       execSync('pnpm run web:build', { cwd: path.resolve(__dirname, '../..'), stdio: 'inherit' });
     }
 
-    const app = await createServer();
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'architectai-browser-test-'));
+    dbPath = path.join(tempDir, 'product.db');
+    artifactsDir = path.join(tempDir, 'artifacts');
+
+    const app = await createServer({ dbPath, artifactsDir });
     await new Promise<void>((resolve) => {
       server = app.listen(0, () => {
         const addr = server.address();
@@ -50,6 +59,11 @@ describe('ArchitectAI Product UI V2 End-to-End User Journey', () => {
     }
     if (server) {
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    try {
+      if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore
     }
   });
 

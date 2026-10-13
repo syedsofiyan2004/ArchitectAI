@@ -172,7 +172,7 @@ Candidate Verification Recipes:
 ${candidateRecipes.map((r) => `- Recipe: ${r.id} (${r.name}): patterns=[${r.applicableFailurePatterns.join(', ')}] dimensions=[${r.applicableDimensions.join(', ')}]`).join('\n')}
 
 Repository Context Files:
-${context.relevantFiles.join('\n')}
+${context?.relevantFiles ? context.relevantFiles.join('\n') : 'None'}
 
 Changed Files (Diff):
 ${diffReport?.changedFiles.join('\n') || 'None yet'}

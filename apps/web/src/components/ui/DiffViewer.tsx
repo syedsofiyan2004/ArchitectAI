@@ -144,6 +144,9 @@ export const DiffViewer: React.FC<DiffViewerProps> = ({ diff, changedFiles = [] 
                 <div className="diff-file-title-group">
                   {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
                   <span className="diff-file-name font-mono">{file.fileName}</span>
+                  <span className="diff-git-spec font-mono text-muted" style={{ fontSize: '11px', opacity: 0.75 }}>
+                    diff --git a/{file.fileName} b/{file.fileName}
+                  </span>
                   <span className={`diff-status-badge font-mono status-${file.status}`}>
                     {file.status}
                   </span>

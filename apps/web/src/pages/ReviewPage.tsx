@@ -114,6 +114,13 @@ export const ReviewPage: React.FC = () => {
       </section>
 
       {/* Decisions Needed from User (Interactive) */}
+      {run.contractRevision && run.contractRevision > 1 && (
+        <div className="revision-updated-banner" style={{ margin: '16px 0', padding: '12px 16px', background: 'rgba(63, 185, 80, 0.15)', border: '1px solid #3fb950', borderRadius: '6px', color: '#3fb950', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px' }}>
+          <CheckCircle2 size={16} />
+          <span>Architecture updated with your decisions. Ready to build.</span>
+        </div>
+      )}
+
       {uniqueQuestions.length > 0 && (
         <UserDecisionsView
           runId={run.id}

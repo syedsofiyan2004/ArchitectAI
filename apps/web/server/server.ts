@@ -5,6 +5,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import {
   InMemoryKnowledgeRepository,
+  prototypeKnowledgeFixtures,
 } from '@architectai/knowledge';
 import {
   OpenAICompatibleProviderAdapter,
@@ -162,6 +163,15 @@ export async function createServer(options: ServerOptions = {}) {
   const activeWorktreeSessions = new Map<string, IsolatedWorktreeSession>();
   const activeOperations = new Map<string, AbortController>();
   const sessionToRunMap = new Map<string, string>();
+
+  interface RunOperationState {
+    stage: 'PREPARING_WORKTREE' | 'RUNNING_AGENT' | 'RUNNING_NATIVE_CHECKS' | 'RUNNING_VERIFICATION' | 'COMPLETED' | 'FAILED' | 'CANCELLED';
+    currentTask?: string;
+    completedTasks: string[];
+    startedAt: string;
+    message?: string;
+  }
+  const operationStates = new Map<string, RunOperationState>();
 
   // 5. Crash Recovery on Server Startup
   const crashRecoveryService = new CrashRecoveryService(sessionStore, runStore, repoStore);
@@ -685,6 +695,178 @@ export async function createServer(options: ServerOptions = {}) {
     }
   });
 
+  // Lightweight operation state endpoint (Section 6)
+  app.get('/api/runs/:runId/operation', (req: Request, res: Response) => {
+    try {
+      const { runId } = req.params;
+      const op = operationStates.get(runId);
+      if (op) {
+        return res.json({ success: true, operation: op });
+      }
+
+      const run = runStore.findById(runId);
+      if (!run) {
+        return res.status(404).json({ success: false, error: 'Architecture run not found.' });
+      }
+
+      const stage = run.state === 'VERIFIED' || run.state === 'READY_FOR_IMPLEMENTATION'
+        ? 'COMPLETED'
+        : run.state === 'VERIFICATION_FAILED' || run.state === 'FAILED'
+        ? 'FAILED'
+        : run.state === 'CANCELLED'
+        ? 'CANCELLED'
+        : run.state === 'IMPLEMENTING'
+        ? 'RUNNING_AGENT'
+        : run.state === 'REPAIRING'
+        ? 'RUNNING_AGENT'
+        : 'COMPLETED';
+
+      return res.json({
+        success: true,
+        operation: {
+          stage,
+          completedTasks: [],
+          startedAt: run.createdAt,
+          message: run.state === 'CANCELLED' ? 'Build cancelled. Original branch untouched.' : run.state,
+        },
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Canonical question options presentation endpoint (Section 3)
+  app.get('/api/runs/:runId/questions', (req: Request, res: Response) => {
+    try {
+      const { runId } = req.params;
+      const run = runStore.findById(runId);
+      if (!run) {
+        return res.status(404).json({ success: false, error: 'Architecture run not found.' });
+      }
+      const contract = run.contract;
+      const answerRecords = runStore.getUserAnswers(run.id);
+      const answersMap: Record<string, string> = {};
+      for (const a of answerRecords) {
+        answersMap[a.question] = a.answer;
+      }
+
+      const questionsList: Array<{
+        question: string;
+        options: Array<{ label: string; description: string; isRecommended?: boolean }>;
+        currentAnswer?: string;
+      }> = [];
+
+      if (contract?.discoveredConcerns) {
+        for (const concern of contract.discoveredConcerns) {
+          if (Array.isArray(concern.unresolvedQuestions)) {
+            for (const q of concern.unresolvedQuestions) {
+              if (!q || questionsList.some((item) => item.question === q)) continue;
+
+              const matchingDecision = contract.decisions.find(
+                (d) =>
+                  d.problemContext.toLowerCase().includes(concern.title.toLowerCase()) ||
+                  d.problemContext.toLowerCase().includes(q.toLowerCase().slice(0, 15))
+              );
+
+              let options: Array<{ label: string; description: string; isRecommended?: boolean }> = [];
+              if (matchingDecision && matchingDecision.consideredOptions.length > 0) {
+                options = matchingDecision.consideredOptions.map((opt) => ({
+                  label: opt.name,
+                  description: opt.description,
+                  isRecommended: opt.name === matchingDecision.selectedOptionName || opt.id === matchingDecision.selectedOptionId,
+                }));
+              } else {
+                options = [
+                  {
+                    label: 'Recommended Default (Fail-Safe)',
+                    description: 'Follow authoritative industry best practices and enforce strict bounded resources.',
+                    isRecommended: true,
+                  },
+                  {
+                    label: 'Conservative Safety Boundary',
+                    description: 'Prioritize resource containment and fail-safe safety boundaries over high throughput.',
+                  },
+                  {
+                    label: 'High-Availability Fallback',
+                    description: 'Prioritize system availability and gracefully degrade non-critical constraints.',
+                  },
+                ];
+              }
+
+              questionsList.push({
+                question: q,
+                options,
+                currentAnswer: answersMap[q],
+              });
+            }
+          }
+        }
+      }
+
+      return res.json({ success: true, questions: questionsList });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Recompute architecture using recorded answers and persist new ContractRevision (Section 3)
+  app.post('/api/runs/:runId/refresh-architecture', async (req: Request, res: Response) => {
+    try {
+      const { runId } = req.params;
+      const run = runStore.findById(runId);
+      if (!run) {
+        return res.status(404).json({ success: false, error: `Architecture run '${runId}' not found.` });
+      }
+      const answerRecords = runStore.getUserAnswers(run.id);
+      const answersMap: Record<string, string> = {};
+      for (const a of answerRecords) {
+        answersMap[a.question] = a.answer;
+      }
+
+      const existingContext = (run.context || {}) as Record<string, string>;
+      const enrichedContext: Record<string, string> = {
+        ...existingContext,
+        ...answersMap,
+      };
+      const output = await useCase.execute({
+        rawIntent: run.rawIntent,
+        explicitConstraints: run.explicitConstraints,
+        declaredTechStack: run.declaredTechStack,
+        context: enrichedContext,
+      });
+
+      const nextRevision = (run.contractRevision || 1) + 1;
+      const revisionId = `rev_${run.id}_${nextRevision}`;
+      runStore.saveContractRevision({
+        id: revisionId,
+        runId: run.id,
+        revisionNumber: nextRevision,
+        contract: output.contract,
+        reason: 'Updated architecture incorporating user decisions',
+        createdAt: new Date().toISOString(),
+      });
+
+      runStore.update(run.id, {
+        contract: output.contract,
+        contractRevision: nextRevision,
+        context: enrichedContext,
+        state: 'ANALYSIS_COMPLETE',
+        decomposition: output.decomposition,
+        dimensionsDetected: output.dimensionsDetected,
+        updatedAt: new Date().toISOString(),
+      });
+
+      return res.json({
+        success: true,
+        runId: run.id,
+        contractRevision: nextRevision,
+        contract: output.contract,
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // --- Artifacts APIs ---
   app.get('/api/runs/:runId/artifacts', (req: Request, res: Response) => {
     try {
@@ -1005,11 +1187,22 @@ export async function createServer(options: ServerOptions = {}) {
     }
   });
 
-  // Knowledge status API
+  // Knowledge status API (Section 2)
   app.get('/api/knowledge/status', (_req: Request, res: Response) => {
     try {
       const status = knowledgeBootstrapService.getStatus();
-      res.json({ success: true, status });
+      const l1Count = prototypeKnowledgeFixtures.filter((f) => f.level === 'L1_FUNDAMENTAL').length;
+      const l2Count = prototypeKnowledgeFixtures.filter((f) => f.level === 'L2_FAILURE_PATTERN').length;
+      const l3Count = prototypeKnowledgeFixtures.filter((f) => f.level === 'L3_TECHNOLOGY_SPECIFIC').length;
+      res.json({
+        success: true,
+        status: {
+          ...status,
+          l1Count,
+          l2Count,
+          l3Count,
+        },
+      });
     } catch (err: unknown) {
       res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
     }
@@ -1124,7 +1317,13 @@ export async function createServer(options: ServerOptions = {}) {
       if (controller) {
         controller.abort();
         activeOperations.delete(runId);
-        runStore.updateState(runId, 'FAILED');
+        runStore.updateState(runId, 'CANCELLED');
+        operationStates.set(runId, {
+          stage: 'CANCELLED',
+          completedTasks: [],
+          startedAt: new Date().toISOString(),
+          message: 'Build cancelled. Original branch untouched.',
+        });
         return res.json({ success: true, message: `Run '${runId}' operation cancelled.`, cancelled: true });
       }
 
@@ -1134,7 +1333,13 @@ export async function createServer(options: ServerOptions = {}) {
       }
 
       if (['ANALYZING', 'IMPLEMENTING', 'REPAIRING'].includes(run.state)) {
-        runStore.updateState(runId, 'FAILED');
+        runStore.updateState(runId, 'CANCELLED');
+        operationStates.set(runId, {
+          stage: 'CANCELLED',
+          completedTasks: [],
+          startedAt: new Date().toISOString(),
+          message: 'Build cancelled. Original branch untouched.',
+        });
         return res.json({ success: true, message: `Run '${runId}' marked as cancelled.`, cancelled: true });
       }
 
@@ -1351,6 +1556,13 @@ export async function createServer(options: ServerOptions = {}) {
 
       runStore.updateState(run.id, 'IMPLEMENTING');
 
+      operationStates.set(run.id, {
+        stage: 'PREPARING_WORKTREE',
+        completedTasks: [],
+        startedAt: now,
+        message: 'Setting up isolated Git worktree sandbox...',
+      });
+
       const output = await planExecutor.execute(
         validatedPlan,
         effectiveAgentId,
@@ -1360,6 +1572,15 @@ export async function createServer(options: ServerOptions = {}) {
           preserveWorktreeOnFailure: true,
           allowDirtyRepo: Boolean(allowDirtyRepo),
           signal: abortController.signal,
+          onProgress: (p) => {
+            operationStates.set(run.id, {
+              stage: p.stage,
+              currentTask: p.currentTask,
+              completedTasks: p.completedTasks || [],
+              startedAt: now,
+              message: p.message,
+            });
+          },
         }
       );
 
@@ -1415,6 +1636,13 @@ export async function createServer(options: ServerOptions = {}) {
         runStore.updateState(run.id, 'FAILED');
       }
 
+      operationStates.set(run.id, {
+        stage: isVerified ? 'COMPLETED' : 'FAILED',
+        completedTasks: validatedPlan.tasks.map((t) => t.id),
+        startedAt: now,
+        message: isVerified ? 'All checks and invariants verified.' : 'Verification disproved implementation.',
+      });
+
       return res.json({
         success: true,
         sessionId,
@@ -1424,6 +1652,7 @@ export async function createServer(options: ServerOptions = {}) {
         },
       });
     } catch (err: unknown) {
+      console.error('[PLAN EXECUTE ERROR]', err);
       const rawMsg = err instanceof Error ? err.message : String(err);
       const safeMsg = redactSensitiveData(rawMsg);
       const code = (err as any)?.code as ProductFailureCode | undefined;
@@ -1445,7 +1674,15 @@ export async function createServer(options: ServerOptions = {}) {
       };
 
       if (code === 'USER_CANCELLED' || abortController.signal.aborted) {
-        if (currentRunId) safeUpdateRunState(currentRunId, 'FAILED');
+        if (currentRunId) {
+          safeUpdateRunState(currentRunId, 'CANCELLED');
+          operationStates.set(currentRunId, {
+            stage: 'CANCELLED',
+            completedTasks: [],
+            startedAt: new Date().toISOString(),
+            message: 'Build cancelled. Original branch untouched.',
+          });
+        }
         return sendApiError(res, 409, 'USER_CANCELLED', 'Operation was cancelled by user.', {
           recoverable: true,
           userActionRequired: 'Restart implementation when ready.',
@@ -1640,6 +1877,16 @@ export async function createServer(options: ServerOptions = {}) {
         runStore.update(runId, { state: 'REPAIRING' });
       }
 
+      // Resolve available agent for autonomous repair
+      const availableAgents = await agentGateway.listAvailableAgents();
+      let effectiveRepairAgentId = agentId;
+      const targetAgent = availableAgents.find((a) => a.adapter.id === agentId);
+      if (!targetAgent || !targetAgent.availability.available) {
+        const preferred = agentConfigStore.getPreferred();
+        const prefAgent = availableAgents.find((a) => a.adapter.id === preferred && a.availability.available);
+        effectiveRepairAgentId = prefAgent?.adapter.id || availableAgents.find((a) => a.availability.available)?.adapter.id || 'deterministic-agent';
+      }
+
       const repairResult = await repairLoopUseCase.execute({
         contract: validatedContract,
         implementationPlan: validatedPlan,
@@ -1659,7 +1906,7 @@ export async function createServer(options: ServerOptions = {}) {
         diagnoses,
         repairPlan,
         maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : 3,
-        agentId,
+        agentId: effectiveRepairAgentId,
         cleanupWorktreeOnFinish: true,
         signal: abortController.signal,
       });

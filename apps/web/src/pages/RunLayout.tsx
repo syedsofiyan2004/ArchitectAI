@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { useRuns } from '../store/runs';
 import { EvidenceDrawer } from '../components/layout/EvidenceDrawer';
+import { StatusBadge } from '../components/ui/StatusBadge';
 
 export const RunLayout: React.FC = () => {
   const { runId } = useParams<{ runId: string }>();
@@ -47,6 +48,7 @@ export const RunLayout: React.FC = () => {
               createdAt: r.createdAt,
               status: (r.state === 'FAILED' && !r.contract) ? 'failed' : r.state === 'ANALYZING' ? 'analyzing' : 'completed',
               state: r.state,
+              contractRevision: r.contractRevision,
               userAnswers: r.userAnswers || {},
               result: r.contract ? {
                 contract: r.contract,
@@ -179,10 +181,11 @@ export const RunLayout: React.FC = () => {
           <Link to="/" className="back-to-home-link" title="Back to Dashboard">
             <ArrowLeft size={16} />
           </Link>
-          <div className="run-context-title">
+          <div className="run-context-title" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
             <span className="run-title-text" title={run.rawIntent}>
               {run.title}
             </span>
+            <StatusBadge status={run.state || (run.status === 'completed' ? 'READY_FOR_IMPLEMENTATION' : run.status)} size="sm" />
           </div>
         </div>
 

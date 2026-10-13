@@ -1,20 +1,16 @@
-import React from 'react';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
-  Layers,
   Plus,
   Sliders,
   Terminal,
-  FolderGit2,
   Folder,
-  CheckCircle2,
-  AlertCircle,
-  Sparkles,
 } from 'lucide-react';
 import { useRuns } from '../../store/runs';
+import { SettingsTab } from './SettingsModal';
 
 interface SidebarProps {
-  onOpenSettings: () => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onOpenNewProject: () => void;
   isMobileOpen?: boolean;
   onCloseMobile?: () => void;
@@ -26,16 +22,65 @@ export const Sidebar: React.FC<SidebarProps> = ({
   isMobileOpen = false,
   onCloseMobile,
 }) => {
-  const { projects, activeProject, selectProject } = useRuns();
+  const { projects, activeProject, activeRepository, selectProject } = useRuns();
   const navigate = useNavigate();
-  const location = useLocation();
+  const [capabilities, setCapabilities] = useState<any>(null);
+
+  useEffect(() => {
+    const url = activeProject ? `/api/system/capabilities?projectId=${activeProject.id}` : '/api/system/capabilities';
+    fetch(url)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.success) {
+          setCapabilities(data.capabilities);
+        }
+      })
+      .catch(() => {});
+  }, [activeProject]);
 
   const handleSelectProject = async (projectId: string) => {
     await selectProject(projectId);
     if (onCloseMobile) onCloseMobile();
-    // Navigate home to see active project workspace
     navigate('/');
   };
+
+  // Compute status per Item 12:
+  // - "System ready" when analysisProvider and codingAgent and git are ready.
+  // - "Demo mode" when running deterministic demo provider.
+  // - "Setup needed" when provider or agent requires configuration.
+  // - "Repository needed" when active project has no registered repository.
+  // - "Degraded" when one or more subsystems are unavailable.
+  const getReadiness = (): { label: string; tab: SettingsTab; statusClass: string } => {
+    if (!capabilities) {
+      return { label: 'System ready', tab: 'general', statusClass: 'ready' };
+    }
+    const isDemo = capabilities?.details?.provider?.id === 'deterministic-demo';
+    const providerReady = capabilities.analysisProvider === 'READY';
+    const agentReady = capabilities.codingAgent === 'READY';
+    const gitReady = capabilities.git === 'READY';
+
+    if (capabilities.git === 'UNAVAILABLE' || capabilities.verificationRuntime === 'UNAVAILABLE') {
+      return { label: 'Degraded', tab: 'advanced', statusClass: 'degraded' };
+    }
+    if (capabilities.analysisProvider === 'NOT_CONFIGURED') {
+      return { label: 'Setup needed', tab: 'provider', statusClass: 'warning' };
+    }
+    if (capabilities.codingAgent === 'UNAVAILABLE') {
+      return { label: 'Setup needed', tab: 'agent', statusClass: 'warning' };
+    }
+    if (!activeRepository || capabilities.repositoryAccess === 'UNAVAILABLE') {
+      return { label: 'Repository needed', tab: 'general', statusClass: 'warning' };
+    }
+    if (isDemo) {
+      return { label: 'Demo mode', tab: 'provider', statusClass: 'demo' };
+    }
+    if (providerReady && agentReady && gitReady) {
+      return { label: 'System ready', tab: 'general', statusClass: 'ready' };
+    }
+    return { label: 'Degraded', tab: 'advanced', statusClass: 'degraded' };
+  };
+
+  const readiness = getReadiness();
 
   return (
     <aside className={`workspace-sidebar ${isMobileOpen ? 'mobile-open' : ''}`} aria-label="Main navigation">
@@ -99,18 +144,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <button
           type="button"
           className="system-readiness-btn"
-          onClick={onOpenSettings}
-          title="System configuration and readiness"
+          onClick={() => onOpenSettings(readiness.tab)}
+          title={`System status: ${readiness.label}. Click to view details.`}
         >
-          <span className="status-dot-pulse"></span>
-          <span className="readiness-text font-mono">System ready</span>
+          <span className={`status-dot-pulse ${readiness.statusClass}`}></span>
+          <span className="readiness-text font-mono">{readiness.label}</span>
         </button>
 
         {/* Settings Button */}
         <button
           type="button"
           className="sidebar-settings-btn"
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings('general')}
           title="Open settings"
         >
           <Sliders size={14} />

@@ -83,10 +83,12 @@ export const ProofView: React.FC<ProofViewProps> = ({
             <div>
               <span className="proof-status-tag font-mono">VERIFIED</span>
               <h3 className="proof-result-heading">
-                All blocking engineering invariants independently proven.
+                {repairResult?.isRepaired ? 'Repaired and independently verified' : 'All blocking engineering invariants independently proven.'}
               </h3>
               <p className="proof-result-desc">
-                ArchitectAI verified this implementation against adversarial stimuli in an isolated workspace.
+                {repairResult?.isRepaired
+                  ? 'ArchitectAI automated repair loop fixed the failure and independently re-verified all invariants.'
+                  : 'ArchitectAI verified this implementation against adversarial stimuli in an isolated workspace.'}
               </p>
             </div>
           </div>

@@ -3,11 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
-import { SettingsModal } from './SettingsModal';
+import { SettingsModal, SettingsTab } from './SettingsModal';
 import { ProjectModal } from './ProjectModal';
 import { ConnectRepoModal } from './ConnectRepoModal';
 import { ExamplesModal } from './ExamplesModal';
-import { SystemStatusModal } from './SystemStatusModal';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -16,10 +15,10 @@ interface AppShellProps {
 export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const [isPaletteOpen, setIsPaletteOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [isConnectRepoOpen, setIsConnectRepoOpen] = useState(false);
   const [isExamplesOpen, setIsExamplesOpen] = useState(false);
-  const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const navigate = useNavigate();
@@ -36,7 +35,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         setIsProjectModalOpen(false);
         setIsConnectRepoOpen(false);
         setIsExamplesOpen(false);
-        setIsStatusOpen(false);
         setIsMobileSidebarOpen(false);
       } else if (e.key === 'n' && !['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
         if (!e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -49,6 +47,11 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [navigate]);
+
+  const handleOpenSettings = (tab: SettingsTab = 'general') => {
+    setSettingsTab(tab);
+    setIsSettingsOpen(true);
+  };
 
   return (
     <div className="product-shell">
@@ -63,7 +66,7 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
 
       {/* Left Workspace Sidebar */}
       <Sidebar
-        onOpenSettings={() => setIsSettingsOpen(true)}
+        onOpenSettings={handleOpenSettings}
         onOpenNewProject={() => setIsProjectModalOpen(true)}
         isMobileOpen={isMobileSidebarOpen}
         onCloseMobile={() => setIsMobileSidebarOpen(false)}
@@ -111,13 +114,14 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
         }}
         onOpenStatus={() => {
           setIsPaletteOpen(false);
-          setIsStatusOpen(true);
+          handleOpenSettings('advanced');
         }}
       />
 
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsTab}
       />
 
       <ProjectModal
@@ -133,11 +137,6 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
       <ExamplesModal
         isOpen={isExamplesOpen}
         onClose={() => setIsExamplesOpen(false)}
-      />
-
-      <SystemStatusModal
-        isOpen={isStatusOpen}
-        onClose={() => setIsStatusOpen(false)}
       />
     </div>
   );

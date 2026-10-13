@@ -9,15 +9,30 @@ export interface BuildStageItem {
 }
 
 interface BuildTimelineProps {
-  stages: BuildStageItem[];
+  stages?: BuildStageItem[];
+  operationStage?: string;
+  currentTask?: string;
+  completedTasks?: string[];
+  message?: string;
   logs?: string[];
   startTime?: number;
   onCancel?: () => void;
   isCancelling?: boolean;
 }
 
+const CANONICAL_PHASES = [
+  { id: 'PREPARING_WORKTREE', name: 'Preparing isolated Git worktree sandbox' },
+  { id: 'RUNNING_AGENT', name: 'Coding agent implementing tasks' },
+  { id: 'RUNNING_NATIVE_CHECKS', name: 'Running snapshotted repository test checks' },
+  { id: 'RUNNING_VERIFICATION', name: 'Running independent adversarial verification' },
+];
+
 export const BuildTimeline: React.FC<BuildTimelineProps> = ({
-  stages,
+  stages: customStages,
+  operationStage,
+  currentTask,
+  completedTasks = [],
+  message,
   logs = [],
   startTime = Date.now(),
   onCancel,
@@ -39,22 +54,53 @@ export const BuildTimeline: React.FC<BuildTimelineProps> = ({
     return `${m}:${s < 10 ? '0' : ''}${s}`;
   };
 
+  // Derive stages from operationStage if customStages not provided
+  const stages: BuildStageItem[] = customStages || CANONICAL_PHASES.map((p, idx) => {
+    const activeIdx = CANONICAL_PHASES.findIndex((item) => item.id === operationStage);
+    const isPast = activeIdx > idx || operationStage === 'COMPLETED';
+    const isCurrent = operationStage === p.id;
+    const isFailed = operationStage === 'FAILED' && activeIdx === idx;
+
+    let status: BuildStageItem['status'] = 'pending';
+    if (isPast) status = 'completed';
+    else if (isCurrent) status = 'in_progress';
+    else if (isFailed) status = 'failed';
+
+    let detail: string | undefined;
+    if (p.id === 'RUNNING_AGENT' && currentTask) {
+      detail = `Current task: ${currentTask}`;
+    } else if (isCurrent && message) {
+      detail = message;
+    }
+
+    return {
+      id: p.id,
+      name: p.name,
+      status,
+      detail,
+    };
+  });
+
+  const isCancelled = operationStage === 'CANCELLED';
+
   return (
     <div className="build-timeline-panel">
       <div className="timeline-top-bar">
         <div className="timeline-title-group">
-          <div className="pulse-indicator">
+          <div className={`pulse-indicator ${isCancelled ? 'pulse-cancelled' : ''}`}>
             <span className="pulse-dot"></span>
           </div>
           <div>
-            <h3 className="timeline-heading">Building in isolated workspace</h3>
+            <h3 className="timeline-heading">
+              {isCancelled ? 'Build Cancelled' : 'Building in isolated workspace'}
+            </h3>
             <span className="timeline-timer font-mono text-muted">
-              Elapsed: {formatElapsed(elapsedSec)}
+              Elapsed: {formatElapsed(elapsedSec)} {currentTask ? `• Task: ${currentTask}` : ''}
             </span>
           </div>
         </div>
 
-        {onCancel && (
+        {onCancel && !isCancelled && operationStage !== 'COMPLETED' && operationStage !== 'FAILED' && (
           <button
             type="button"
             className="btn-danger-outline cancel-build-btn"
@@ -66,6 +112,27 @@ export const BuildTimeline: React.FC<BuildTimelineProps> = ({
           </button>
         )}
       </div>
+
+      {isCancelled && (
+        <div
+          className="cancelled-banner font-mono"
+          style={{
+            margin: '12px 0',
+            padding: '10px 14px',
+            background: 'rgba(218, 54, 51, 0.1)',
+            border: '1px solid #da3633',
+            borderRadius: '6px',
+            color: '#f85149',
+            fontSize: '13px',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+          }}
+        >
+          <StopCircle size={16} />
+          <span>Build cancelled. Original branch untouched.</span>
+        </div>
+      )}
 
       <div className="activity-timeline-feed">
         {stages.map((stage, idx) => {

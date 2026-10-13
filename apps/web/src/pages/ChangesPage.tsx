@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
-import { FileCode, ArrowLeft, GitBranch, ShieldCheck } from 'lucide-react';
+import { FileCode, ArrowLeft, GitBranch, ShieldCheck, RefreshCw } from 'lucide-react';
 import { AnalysisRunRecord } from '../types';
 import { DiffViewer } from '../components/ui/DiffViewer';
 
@@ -22,8 +22,70 @@ export const ChangesPage: React.FC = () => {
     filesCount: latestSession.changedFiles?.length || 0,
   } : undefined);
 
-  const rawDiff = run.execution?.diffReport?.diff || '';
-  const changedFiles = diffReport?.changedFiles || [];
+  const [persistedDiff, setPersistedDiff] = useState<string>(run.execution?.diffReport?.diff || '');
+  const [loadingDiff, setLoadingDiff] = useState<boolean>(false);
+
+  // Load real diff artifact from backend (Item 10)
+  useEffect(() => {
+    let isMounted = true;
+    setLoadingDiff(true);
+
+    fetch(`/api/runs/${run.id}/artifacts`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then(async (data) => {
+        if (!isMounted || !data || !data.success || !Array.isArray(data.artifacts)) {
+          setLoadingDiff(false);
+          return;
+        }
+
+        // Prioritize repair.diff if available, else changes.diff
+        const repairArt = data.artifacts.find((a: any) => a.relativePath === 'repair.diff' || a.id?.includes('repair'));
+        const changesArt = data.artifacts.find((a: any) => a.relativePath === 'changes.diff' || a.type === 'DIFF_PATCH');
+        const targetFilename = repairArt ? 'repair.diff' : changesArt ? 'changes.diff' : null;
+
+        if (targetFilename) {
+          try {
+            const contentRes = await fetch(`/api/runs/${run.id}/artifacts/${targetFilename}`);
+            if (contentRes.ok) {
+              const contentData = await contentRes.json();
+              if (contentData.success && contentData.content && isMounted) {
+                setPersistedDiff(contentData.content);
+              }
+            }
+          } catch {
+            // Ignore error
+          }
+        }
+        if (isMounted) setLoadingDiff(false);
+      })
+      .catch(() => {
+        if (isMounted) setLoadingDiff(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [run.id]);
+
+  const rawDiff = persistedDiff || run.execution?.diffReport?.diff || '';
+
+  // Extract changed files from raw diff or fallback to recorded session files
+  const extractChangedFiles = (diffText: string): string[] => {
+    if (!diffText) return diffReport?.changedFiles || [];
+    const files: string[] = [];
+    const regex = /diff --git a\/(.+?) b\/(.+?)/g;
+    let match;
+    while ((match = regex.exec(diffText)) !== null) {
+      if (match[2] && !files.includes(match[2])) {
+        files.push(match[2]);
+      }
+    }
+    return files.length > 0 ? files : (diffReport?.changedFiles || []);
+  };
+
+  const changedFiles = extractChangedFiles(rawDiff);
+
+  const hasChanges = Boolean(rawDiff && rawDiff.trim().length > 0) || (changedFiles.length > 0);
 
   return (
     <div className="changes-page-layout">
@@ -35,23 +97,34 @@ export const ChangesPage: React.FC = () => {
           Original repository branches remain strictly untouched.
         </p>
 
-        {run.execution && (
+        {(run.execution || latestSession) && (
           <div className="changes-meta-strip font-mono">
             <span className="meta-item">
               <GitBranch size={13} />
-              <span>Isolated Branch: <strong>{run.execution.isolatedBranch}</strong></span>
+              <span>
+                Isolated Branch: <strong>{run.execution?.isolatedBranch || latestSession?.isolatedBranch || `architectai/${run.id}`}</strong>
+              </span>
             </span>
             <span className="meta-item text-success">
               <ShieldCheck size={13} />
-              <span>Target Branch: <strong>{run.execution.originalBranch} (untouched)</strong></span>
+              <span>
+                Target Branch: <strong>{run.execution?.originalBranch || latestSession?.originalBranch || 'main'} (untouched)</strong>
+              </span>
             </span>
           </div>
         )}
       </section>
 
-      {diffReport ? (
+      {hasChanges ? (
         <section className="diff-content-section">
-          <DiffViewer diff={rawDiff} changedFiles={changedFiles} />
+          {loadingDiff && !rawDiff ? (
+            <div style={{ padding: '32px', textAlign: 'center', color: 'var(--text-muted, #8b949e)', fontFamily: 'monospace' }}>
+              <RefreshCw size={18} className="spin" style={{ marginBottom: '8px' }} />
+              <div>Loading persisted diff artifact...</div>
+            </div>
+          ) : (
+            <DiffViewer diff={rawDiff} changedFiles={changedFiles} />
+          )}
         </section>
       ) : (
         <div className="empty-changes-card">

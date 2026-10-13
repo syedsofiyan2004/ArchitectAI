@@ -23,8 +23,10 @@ interface RunsContextType {
   recordQuestionAnswer: (runId: string, question: string, answer: string) => void;
   createProject: (name: string, description?: string) => Promise<Project>;
   selectProject: (projectId: string) => Promise<void>;
-  registerRepository: (repoPath: string) => Promise<ProjectRepository>;
+  registerRepository: (projectIdOrPath: string, repoPath?: string) => Promise<ProjectRepository>;
   refreshRepository: () => Promise<void>;
+  refreshRun: (runId: string) => Promise<AnalysisRunRecord | undefined>;
+  cancelRun: (runId: string) => Promise<void>;
   csrfToken: string | null;
 }
 
@@ -103,6 +105,7 @@ export const RunsProvider: React.FC<{ children: React.ReactNode }> = ({ children
             createdAt: r.createdAt,
             status: (r.state === 'FAILED' && !r.contract) ? 'failed' : r.state === 'ANALYZING' ? 'analyzing' : 'completed',
             state: r.state,
+            contractRevision: r.contractRevision,
             userAnswers: r.userAnswers || {},
             result: r.contract ? {
               contract: r.contract,
@@ -156,44 +159,31 @@ export const RunsProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return data.project;
   }, [csrfToken]);
 
-  const registerRepository = useCallback(async (repoPath: string): Promise<ProjectRepository> => {
-    if (!activeProject) {
-      throw new Error('No active project selected.');
-    }
-    const res = await fetch(`/api/projects/${activeProject.id}/repository`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
-      },
-      body: JSON.stringify({ repoPath }),
-    });
-    const data = await res.json();
-    if (!res.ok || !data.success) {
-      throw new Error(data.error || 'Failed to register repository.');
-    }
-    setActiveRepository(data.repository);
-    return data.repository;
-  }, [activeProject, csrfToken]);
+  const registerRepository = useCallback(
+    async (projectIdOrPath: string, repoPathArg?: string): Promise<ProjectRepository> => {
+      const targetProjectId = repoPathArg ? projectIdOrPath : activeProject?.id;
+      const targetRepoPath = repoPathArg ? repoPathArg : projectIdOrPath;
 
-  const refreshRepository = useCallback(async (): Promise<void> => {
-    if (!activeProject) return;
-    const res = await fetch(`/api/projects/${activeProject.id}/repository/refresh`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
-      },
-    });
-    const data = await res.json();
-    if (data.success && data.repository) {
+      if (!targetProjectId) {
+        throw new Error('No project specified for repository registration.');
+      }
+      const res = await fetch(`/api/projects/${targetProjectId}/repository`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        },
+        body: JSON.stringify({ repoPath: targetRepoPath }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to register repository.');
+      }
       setActiveRepository(data.repository);
-    }
-  }, [activeProject, csrfToken]);
-
-  const getRun = useCallback((id: string) => {
-    return runs.find((r) => r.id === id);
-  }, [runs]);
+      return data.repository;
+    },
+    [activeProject, csrfToken]
+  );
 
   const updateRun = useCallback((id: string, updates: Partial<AnalysisRunRecord>) => {
     setRuns((prev) => {
@@ -215,6 +205,78 @@ export const RunsProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return [newRecord, ...prev];
     });
   }, []);
+
+  const refreshRun = useCallback(async (runId: string): Promise<AnalysisRunRecord | undefined> => {
+    try {
+      const res = await fetch(`/api/runs/${runId}`);
+      const data = await res.json();
+      if (data.success && data.run) {
+        const r = data.run;
+        const updatedRun: AnalysisRunRecord = {
+          id: r.id,
+          projectId: r.projectId,
+          title: r.title,
+          rawIntent: r.rawIntent,
+          context: r.context,
+          explicitConstraints: r.explicitConstraints,
+          declaredTechStack: r.declaredTechStack,
+          createdAt: r.createdAt,
+          status: (r.state === 'FAILED' && !r.contract) ? 'failed' : r.state === 'ANALYZING' ? 'analyzing' : 'completed',
+          state: r.state,
+          contractRevision: r.contractRevision,
+          userAnswers: data.answers || r.userAnswers || {},
+          sessions: data.sessions || [],
+          artifacts: data.artifacts || [],
+          result: r.contract ? {
+            contract: r.contract,
+            stages: [],
+            dimensionsDetected: r.dimensionsDetected || [],
+            mode: r.analysisMode === 'deterministic' ? 'deterministic-demo' : 'remote-model',
+            decomposition: r.decomposition,
+          } : undefined,
+        };
+        updateRun(runId, updatedRun);
+        return updatedRun;
+      }
+    } catch (err) {
+      console.warn('Failed to refresh run from server:', err);
+    }
+    return undefined;
+  }, [updateRun]);
+
+  const cancelRun = useCallback(async (runId: string): Promise<void> => {
+    try {
+      await fetch(`/api/runs/${runId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        },
+      });
+      updateRun(runId, { state: 'CANCELLED', status: 'failed' });
+    } catch (err) {
+      console.warn('Failed to cancel run:', err);
+    }
+  }, [csrfToken, updateRun]);
+
+  const refreshRepository = useCallback(async (): Promise<void> => {
+    if (!activeProject) return;
+    const res = await fetch(`/api/projects/${activeProject.id}/repository/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+      },
+    });
+    const data = await res.json();
+    if (data.success && data.repository) {
+      setActiveRepository(data.repository);
+    }
+  }, [activeProject, csrfToken]);
+
+  const getRun = useCallback((id: string) => {
+    return runs.find((r) => r.id === id);
+  }, [runs]);
 
   const deleteRun = useCallback((id: string) => {
     setRuns((prev) => prev.filter((r) => r.id !== id));
@@ -330,6 +392,8 @@ export const RunsProvider: React.FC<{ children: React.ReactNode }> = ({ children
         selectProject,
         registerRepository,
         refreshRepository,
+        refreshRun,
+        cancelRun,
         csrfToken,
       }}
     >

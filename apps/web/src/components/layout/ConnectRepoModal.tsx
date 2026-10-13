@@ -13,7 +13,7 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
   onClose,
   currentPath = '',
 }) => {
-  const { registerRepository } = useRuns();
+  const { registerRepository, activeProject } = useRuns();
   const [repoPath, setRepoPath] = useState(currentPath);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +28,8 @@ export const ConnectRepoModal: React.FC<ConnectRepoModalProps> = ({
     setError(null);
 
     try {
-      await registerRepository(repoPath.trim());
+      if (!activeProject) throw new Error('No active project selected.');
+      await registerRepository(activeProject.id, repoPath.trim());
       onClose();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to connect repository');
