@@ -235,7 +235,7 @@ export const RATE_LIMITER_FIXTURE_CONTRACT: EngineeringContract = EngineeringCon
     status: 'accepted',
     createdAt: '2026-10-14T08:00:00.000Z',
     author: 'ArchitectAI Systems Engine',
-    tags: ['rate-limiter', 'traffic_management', 'distributed_systems'],
+    tags: ['rate-limiter', 'traffic_management', 'distributed_systems', 'curated-demo-fixture'],
   },
 });
 
@@ -451,7 +451,7 @@ export const PAYMENT_OUTBOX_FIXTURE_CONTRACT: EngineeringContract = EngineeringC
     status: 'accepted',
     createdAt: '2026-10-14T09:00:00.000Z',
     author: 'ArchitectAI Fintech Engine',
-    tags: ['payments', 'fintech', 'idempotency', 'transactional_outbox'],
+    tags: ['payments', 'fintech', 'idempotency', 'transactional_outbox', 'curated-demo-fixture'],
   },
 });
 
@@ -641,7 +641,7 @@ export const IMAGE_PIPELINE_FIXTURE_CONTRACT: EngineeringContract = EngineeringC
     status: 'accepted',
     createdAt: '2026-10-14T09:30:00.000Z',
     author: 'ArchitectAI Media Systems Engine',
-    tags: ['media', 'image_processing', 'queues', 'bounded_concurrency'],
+    tags: ['media', 'image_processing', 'queues', 'bounded_concurrency', 'curated-demo-fixture'],
   },
 });
 

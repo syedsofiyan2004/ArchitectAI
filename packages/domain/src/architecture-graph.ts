@@ -59,6 +59,7 @@ export const ArchitectureGraphNodeSchema = z.object({
   // Systems Rationale & Truthful Evidence
   purpose: z.string().min(1, 'Node purpose must be documented'),
   whySelected: z.string().default(''),
+  supportedClaim: z.string().optional(),
   tradeOffs: z.array(z.string()).default([]),
   assumptions: z.array(z.string()).default([]),
   unresolvedQuestions: z.array(z.string()).default([]),
@@ -99,6 +100,7 @@ export const ArchitectureGraphEdgeSchema = z.object({
   // Systems Rationale
   purpose: z.string().default(''),
   whySelected: z.string().default(''),
+  supportedClaim: z.string().optional(),
   assumptions: z.array(z.string()).default([]),
   evidenceReferences: z.array(z.string()).default([]),
   orderingGuarantee: z.string().optional(),
@@ -126,6 +128,7 @@ export const ArchitectureGraphProjectionSchema = z.object({
   id: z.string().min(1),
   contractId: z.string().min(1),
   contractRevision: z.number().int().positive().default(1),
+  contractFingerprint: z.string().default(''),
   projectionVersion: z.string().min(1).default('1.0.0'),
   createdAt: z.string(),
   status: GraphProjectionStatusSchema,
@@ -160,11 +163,75 @@ export interface GraphValidationResult {
 }
 
 /**
- * Validates an ArchitectureGraphProjection for topological integrity and contract provenance.
+ * Computes a deterministic canonical content fingerprint for an EngineeringContract.
+ * Changes to requirements, decisions, invariants, concerns, specs, or assumptions
+ * immediately alter this fingerprint, binding projection validity to contract state.
+ */
+export function computeContractFingerprint(contract: EngineeringContract): string {
+  const canonicalObj = {
+    id: contract.id,
+    version: contract.version,
+    rawIntent: contract.requirement?.rawIntent || '',
+    constraints: (contract.requirement?.explicitConstraints || []).slice().sort(),
+    declaredTech: (contract.requirement?.declaredTechStack || []).slice().sort(),
+    context: contract.requirement?.context || {},
+    decisions: (contract.decisions || [])
+      .map((d) => ({
+        id: d.id,
+        context: d.problemContext,
+        optionId: d.selectedOptionId || '',
+        optionName: d.selectedOptionName || '',
+        rationale: d.rationale,
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    invariants: (contract.invariants || [])
+      .map((i) => ({ id: i.id, prop: i.property, sev: i.severity }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    concerns: (contract.discoveredConcerns || [])
+      .map((c) => ({ id: c.id, title: c.title, dims: (c.dimensions || []).slice().sort() }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    specs: (contract.verificationSpecs || [])
+      .map((s) => ({ id: s.id, target: s.target, exp: s.expectedProperty }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+    assumptions: (contract.assumptions || []).slice().sort(),
+  };
+
+  const str = JSON.stringify(canonicalObj);
+  // Deterministic 64-bit FNV-1a hash
+  let hash = 0xcbf29ce484222325n;
+  const prime = 0x100000001b3n;
+  for (let i = 0; i < str.length; i++) {
+    hash ^= BigInt(str.charCodeAt(i));
+    hash = (hash * prime) & 0xffffffffffffffffn;
+  }
+  return `cfp_${hash.toString(16).padStart(16, '0')}`;
+}
+
+const STOP_WORDS = new Set([
+  'the', 'and', 'for', 'with', 'this', 'that', 'from', 'into', 'each',
+  'across', 'will', 'must', 'should', 'have', 'been', 'were', 'what',
+  'when', 'where', 'which', 'their', 'there', 'they', 'than', 'then'
+]);
+
+function extractMeaningfulTokens(text: string): Set<string> {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !STOP_WORDS.has(t));
+  return new Set(tokens);
+}
+
+/**
+ * Validates an ArchitectureGraphProjection for topological integrity, contract provenance,
+ * and semantic grounding.
  * - Enforces zero dangling edges (source and target must exist in nodes)
  * - Enforces unique node and edge IDs
  * - Enforces provenance references against the authoritative EngineeringContract
- * - Verifies revision consistency
+ * - Enforces contract content fingerprint matching
+ * - Disallows claiming origin=contract_decision or confidence=architectural_decision without
+ *   substantive semantic relevance in the referenced decision.
+ * - Disallows silent introduction of ungrounded technologies, capacity figures, or SLAs.
  */
 export function validateArchitectureGraphProjection(
   projection: ArchitectureGraphProjection,
@@ -207,7 +274,7 @@ export function validateArchitectureGraphProjection(
     }
   }
 
-  // 4. Contract Provenance & Revision Consistency (when authoritative contract is supplied)
+  // 4. Contract Provenance, Fingerprint & Semantic Grounding Consistency
   if (contract) {
     if (projection.contractId !== contract.id) {
       errors.push(
@@ -215,12 +282,29 @@ export function validateArchitectureGraphProjection(
       );
     }
 
+    const expectedFingerprint = computeContractFingerprint(contract);
+    if (projection.contractFingerprint && projection.contractFingerprint !== expectedFingerprint) {
+      errors.push(
+        `Contract content fingerprint mismatch: projection fingerprint "${projection.contractFingerprint}" does not match contract content fingerprint "${expectedFingerprint}"`
+      );
+    }
+
     const validDecisionIds = new Set(contract.decisions.map((d) => d.id));
     const validConcernIds = new Set(contract.discoveredConcerns.map((c) => c.id));
     const validInvariantIds = new Set(contract.invariants.map((i) => i.id));
     const validSpecIds = new Set(contract.verificationSpecs.map((s) => s.id));
+    const decisionsMap = new Map(contract.decisions.map((d) => [d.id, d]));
 
-    // Verify node provenance references
+    const contractAllText = [
+      contract.requirement?.rawIntent || '',
+      ...(contract.requirement?.declaredTechStack || []),
+      ...(contract.requirement?.explicitConstraints || []),
+      ...contract.decisions.map((d) => `${d.problemContext} ${d.selectedOptionName || ''} ${d.rationale}`),
+      ...contract.invariants.map((i) => i.property),
+      ...(contract.assumptions || []),
+    ].join(' ').toLowerCase();
+
+    // Verify node provenance and semantic grounding
     for (const node of projection.nodes) {
       for (const dId of (node.sourceDecisionIds || [])) {
         if (!validDecisionIds.has(dId)) {
@@ -242,9 +326,64 @@ export function validateArchitectureGraphProjection(
           errors.push(`Node "${node.id}" references invalid/missing spec ID "${sId}" in contract`);
         }
       }
+
+      // Semantic Grounding Rule 1: Cannot claim contract_decision without non-empty sourceDecisionIds
+      if (node.origin === 'contract_decision' || node.confidence === 'architectural_decision') {
+        if (!node.sourceDecisionIds || node.sourceDecisionIds.length === 0) {
+          errors.push(
+            `Node "${node.id}" claims origin "contract_decision" or confidence "architectural_decision" but has no sourceDecisionIds`
+          );
+        } else {
+          // Check semantic relevance between referenced decisions and the node
+          const nodeTokens = extractMeaningfulTokens(`${node.label} ${node.category} ${node.purpose}`);
+          let hasRelevantDecision = false;
+
+          for (const dId of node.sourceDecisionIds) {
+            const decision = decisionsMap.get(dId);
+            if (!decision) continue;
+
+            const decisionText = `${decision.problemContext} ${decision.selectedOptionName || ''} ${decision.rationale} ${(decision.consideredOptions || []).map((o) => `${o.name} ${o.description}`).join(' ')}`;
+            const decisionTokens = extractMeaningfulTokens(decisionText);
+
+            // Check if there is semantic overlap
+            for (const token of nodeTokens) {
+              if (decisionTokens.has(token)) {
+                hasRelevantDecision = true;
+                break;
+              }
+            }
+            if (hasRelevantDecision) break;
+          }
+
+          if (!hasRelevantDecision) {
+            errors.push(
+              `Node "${node.id}" claims supporting decisions [${node.sourceDecisionIds.join(', ')}], but referenced decision text has no semantic relevance to node "${node.label}" (${node.category})`
+            );
+          }
+        }
+      }
+
+      // Semantic Grounding Rule 2: Technology must not be silently invented
+      if (node.technology && (node.origin === 'contract_decision' || node.confidence === 'architectural_decision')) {
+        const techTokens = Array.from(extractMeaningfulTokens(node.technology));
+        const techGrounded = techTokens.some((t) => contractAllText.includes(t)) ||
+          node.assumptions.some((a) => a.toLowerCase().includes(node.technology!.toLowerCase()));
+        if (!techGrounded) {
+          errors.push(
+            `Node "${node.id}" specifies technology "${node.technology}" which is not grounded in contract decisions, requirement context, or explicit assumptions`
+          );
+        }
+      }
+
+      // Semantic Grounding Rule 3: Capacity / SLA figures must be grounded or marked inferred
+      if ((node.modeledCapacity || node.assumedLatencySla) && node.confidence === 'verified_fact') {
+        errors.push(
+          `Node "${node.id}" claims confidence "verified_fact" for modeled metrics before verification execution`
+        );
+      }
     }
 
-    // Verify edge provenance references
+    // Verify edge provenance and semantic grounding
     for (const edge of projection.edges) {
       for (const dId of (edge.sourceDecisionIds || [])) {
         if (!validDecisionIds.has(dId)) {
@@ -265,6 +404,10 @@ export function validateArchitectureGraphProjection(
         if (!validSpecIds.has(sId)) {
           errors.push(`Edge "${edge.id}" references invalid/missing spec ID "${sId}" in contract`);
         }
+      }
+
+      if (edge.origin === 'contract_decision' && (!edge.sourceDecisionIds || edge.sourceDecisionIds.length === 0)) {
+        errors.push(`Edge "${edge.id}" claims origin "contract_decision" but has no sourceDecisionIds`);
       }
     }
   }

@@ -100,7 +100,7 @@ describe('Architecture Studio Graph Integration Suite', () => {
   // 1. Graph Schema Validation
   it('1. verifies ArchitectureGraphProjection schema and strict contract provenance', () => {
     const projector = new ArchitectureGraphProjector();
-    const projection = projector.project(RATE_LIMITER_FIXTURE_CONTRACT, { revision: 1 });
+    const projection = projector.projectSync(RATE_LIMITER_FIXTURE_CONTRACT, { allowCuratedTemplates: true, revision: 1 });
 
     const parsed = ArchitectureGraphProjectionSchema.safeParse(projection);
     expect(parsed.success).toBe(true);
@@ -109,6 +109,7 @@ describe('Architecture Studio Graph Integration Suite', () => {
     expect(projection.contractRevision).toBe(1);
 
     const validation = validateArchitectureGraphProjection(projection, RATE_LIMITER_FIXTURE_CONTRACT);
+    if (!validation.valid) console.log('VALIDATION ERRORS:', validation.errors);
     expect(validation.valid).toBe(true);
     expect(validation.errors).toHaveLength(0);
   });
@@ -116,7 +117,7 @@ describe('Architecture Studio Graph Integration Suite', () => {
   // 2. Dangling Edge Rejection
   it('2. detects and rejects dangling edges where source or target does not exist', () => {
     const projector = new ArchitectureGraphProjector();
-    const projection = projector.project(RATE_LIMITER_FIXTURE_CONTRACT);
+    const projection = projector.projectSync(RATE_LIMITER_FIXTURE_CONTRACT, { allowCuratedTemplates: true });
 
     // Inject a dangling edge
     const corrupted: ArchitectureGraphProjection = {
@@ -153,11 +154,11 @@ describe('Architecture Studio Graph Integration Suite', () => {
   // 3. Invalid Provenance Reference Handling
   it('3. detects and reports invalid provenance references not grounded in the contract', () => {
     const projector = new ArchitectureGraphProjector();
-    const projection = projector.project(RATE_LIMITER_FIXTURE_CONTRACT);
+    const projection = projector.projectSync(RATE_LIMITER_FIXTURE_CONTRACT, { allowCuratedTemplates: true });
 
     // Add a node with an invented decision ID
     const ungroundedNode = {
-      ...projection.nodes[0],
+      ...projection.nodes[0]!,
       sourceDecisionIds: ['dec-completely-fabricated-999'],
     };
     const corrupted: ArchitectureGraphProjection = {
@@ -175,7 +176,7 @@ describe('Architecture Studio Graph Integration Suite', () => {
   // 4. Missing Topology Fallback for Incomplete Contracts
   it('4. provides graceful fallback for incomplete or draft contracts without crashing', () => {
     const projector = new ArchitectureGraphProjector();
-    const projection = projector.project(INCOMPLETE_FIXTURE_CONTRACT);
+    const projection = projector.projectSync(INCOMPLETE_FIXTURE_CONTRACT);
 
     expect(projection.status).toBe('incomplete');
     expect(projection.nodes).toHaveLength(0);
@@ -186,10 +187,10 @@ describe('Architecture Studio Graph Integration Suite', () => {
   // 5. Revision Stale Detection
   it('5. detects stale projections when contract revision differs', () => {
     const projector = new ArchitectureGraphProjector();
-    const projection = projector.project(RATE_LIMITER_FIXTURE_CONTRACT, { revision: 1 });
+    const projection = projector.projectSync(RATE_LIMITER_FIXTURE_CONTRACT, { allowCuratedTemplates: true, revision: 1 });
 
-    expect(projector.isProjectionStale(projection, 1)).toBe(false);
-    expect(projector.isProjectionStale(projection, 2)).toBe(true);
+    expect(projector.isProjectionStale(projection, RATE_LIMITER_FIXTURE_CONTRACT, 1)).toBe(false);
+    expect(projector.isProjectionStale(projection, RATE_LIMITER_FIXTURE_CONTRACT, 2)).toBe(true);
   });
 
   // 6. Proves Generic Edge Routing has NO hardcoded edge ID routing
@@ -253,9 +254,9 @@ describe('Architecture Studio Graph Integration Suite', () => {
   // 7. Heterogeneous Contracts Projection Diversity
   it('7. verifies 3 heterogeneous contracts produce distinct topologies and grounded metrics', () => {
     const projector = new ArchitectureGraphProjector();
-    const rl = projector.project(RATE_LIMITER_FIXTURE_CONTRACT);
-    const po = projector.project(PAYMENT_OUTBOX_FIXTURE_CONTRACT);
-    const ip = projector.project(IMAGE_PIPELINE_FIXTURE_CONTRACT);
+    const rl = projector.projectSync(RATE_LIMITER_FIXTURE_CONTRACT, { allowCuratedTemplates: true });
+    const po = projector.projectSync(PAYMENT_OUTBOX_FIXTURE_CONTRACT, { allowCuratedTemplates: true });
+    const ip = projector.projectSync(IMAGE_PIPELINE_FIXTURE_CONTRACT, { allowCuratedTemplates: true });
 
     // Diverse node counts & categories
     expect(rl.nodes).toHaveLength(5);
@@ -272,9 +273,11 @@ describe('Architecture Studio Graph Integration Suite', () => {
     expect(po.simulationModule?.available).toBe(false);
     expect(ip.simulationModule?.available).toBe(false);
 
-    // Provenance verification: all nodes have grounded sourceDecisionIds
-    expect(po.nodes.every((n) => n.sourceDecisionIds.length > 0)).toBe(true);
-    expect(ip.nodes.every((n) => n.sourceDecisionIds.length > 0)).toBe(true);
+    // Provenance verification: all architectural decision nodes have grounded sourceDecisionIds
+    expect(po.nodes.filter((n) => n.origin === 'contract_decision').every((n) => n.sourceDecisionIds.length > 0)).toBe(true);
+    expect(ip.nodes.filter((n) => n.origin === 'contract_decision').every((n) => n.sourceDecisionIds.length > 0)).toBe(true);
+    expect(po.nodes.some((n) => n.origin === 'contract_requirement')).toBe(true);
+    expect(ip.nodes.some((n) => n.origin === 'contract_requirement')).toBe(true);
   });
 
   // 8. Browser Integration & Screenshot Capture across all 3 architectures
@@ -348,6 +351,59 @@ describe('Architecture Studio Graph Integration Suite', () => {
     expect(emptyCount).toBe(0);
     const emptyBanner = await page.locator('.canvas-empty-state').textContent();
     expect(emptyBanner).toContain('Incomplete Architecture Topology');
+
+    await page.close();
+  });
+
+  // 9. Real Persisted Run Architecture Graph Browser Test
+  it('9. opens a REAL persisted run architecture-graph endpoint in browser and proves end-to-end rendering', async () => {
+    // 9A. Create a real project via API
+    const projRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Persisted Clinic Project', description: 'End-to-End Grounded Studio Test' }),
+    });
+    expect(projRes.ok).toBe(true);
+    const { project } = await projRes.json();
+
+    // 9B. Start a real run with requirement intent
+    const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rawIntent: 'Build a doctor appointment booking service with concurrent slot reservation.',
+        explicitConstraints: ['No duplicate bookings'],
+        declaredTechStack: ['Node.js', 'PostgreSQL', 'Redis'],
+        context: { title: 'Clinic Booking System' },
+      }),
+    });
+    expect(runRes.ok).toBe(true);
+    const { runId } = await runRes.json();
+
+    // 9C. Query GET /api/runs/:runId/architecture-graph
+    const graphRes = await fetch(`${baseUrl}/api/runs/${runId}/architecture-graph`);
+    expect(graphRes.status).toBe(200);
+    const graphData = await graphRes.json();
+    expect(graphData.success).toBe(true);
+    expect(graphData.runId).toBe(runId);
+    expect(graphData.status).toBe('valid');
+    expect(graphData.projection.nodes.length).toBeGreaterThan(0);
+    expect(graphData.projection.contractFingerprint).toMatch(/^cfp_/);
+
+    // 9D. Open ?runId= in Playwright browser and assert real run renders in Studio!
+    if (!hasChromium || !browser) return;
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${baseUrl}/studio?runId=${runId}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
+
+    // Verify canvas rendered the persisted run's nodes
+    const renderedNodes = await page.locator('.canvas-node').count();
+    expect(renderedNodes).toBeGreaterThan(0);
+
+    // Verify left nav displays real contract intent
+    const navText = await page.locator('.studio-left-nav').textContent();
+    expect(navText).toContain('doctor appointment booking');
 
     await page.close();
   });

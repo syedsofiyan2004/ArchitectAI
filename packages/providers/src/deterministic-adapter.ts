@@ -7,6 +7,10 @@ import {
   VerificationIntentSchema,
   FailureDiagnosisSchema,
   WellKnownDimensions,
+  ArchitectureGraphProjection,
+  ArchitectureGraphProjectionSchema,
+  computeContractFingerprint,
+  EngineeringContract,
 } from '@architectai/domain';
 import {
   ProviderAdapter,
@@ -1133,6 +1137,246 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
     }
 
 
+
+    if (request.schemaName === 'ArchitectureGraphProjection') {
+      const userMessage = request.messages.find((m) => m.role === 'user')?.content || '';
+      let contract: EngineeringContract | null = null;
+      try {
+        contract = JSON.parse(userMessage) as EngineeringContract;
+      } catch {
+        // Not direct JSON
+      }
+
+      if (!contract || !contract.decisions || contract.decisions.length === 0) {
+        const incomplete: ArchitectureGraphProjection = {
+          id: `proj_synth_${contract?.id || 'unknown'}_rev1`,
+          contractId: contract?.id || 'unknown',
+          contractRevision: 1,
+          contractFingerprint: contract ? computeContractFingerprint(contract) : 'cfp_incomplete',
+          projectionVersion: '1.0.0',
+          createdAt: new Date().toISOString(),
+          status: 'incomplete',
+          nodes: [],
+          edges: [],
+          boundaries: [],
+          rationale: 'EngineeringContract lacks architectural decisions; topology cannot be grounded.',
+          assumptions: contract?.assumptions || [],
+          unresolvedQuestions: contract?.unresolvedQuestions?.length
+            ? contract.unresolvedQuestions
+            : ['No architectural decisions accepted in this contract.'],
+          missingSources: ['contract.decisions is empty'],
+        };
+        const validated = ArchitectureGraphProjectionSchema.parse(incomplete);
+        return {
+          content: JSON.stringify(validated),
+          data: validated as T,
+        };
+      }
+
+      const nodes: import('@architectai/domain').ArchitectureGraphNode[] = [];
+      const edges: import('@architectai/domain').ArchitectureGraphEdge[] = [];
+      const boundaries: import('@architectai/domain').ArchitectureGraphBoundary[] = [];
+
+      // 1. Client Node (derived from requirement)
+      const clientNodeId = 'node-clients';
+      const rawIntentLower = (contract.requirement?.rawIntent || '').toLowerCase();
+      const clientLabel = contract.requirement?.context?.clientType ||
+        (rawIntentLower.includes('doctor') || rawIntentLower.includes('patient') ? 'Patient & Booking Clients' :
+         rawIntentLower.includes('document') || rawIntentLower.includes('editor') ? 'Collaborative Editors' :
+         rawIntentLower.includes('crud') || rawIntentLower.includes('todo') ? 'API REST Clients' :
+         'Client Applications');
+
+      nodes.push({
+        id: clientNodeId,
+        label: clientLabel,
+        sublabel: 'User Ingress / Web & Mobile Interfaces',
+        category: 'client',
+        tier: 'public',
+        origin: 'contract_requirement',
+        confidence: 'inferred_proposed',
+        sourceDecisionIds: [],
+        sourceConcernIds: [],
+        sourceInvariantIds: [],
+        sourceSpecIds: [],
+        purpose: 'Originates client interactions and requests toward the system.',
+        whySelected: 'Client boundary derived from user intent.',
+        supportedClaim: contract.requirement?.rawIntent || '',
+        tradeOffs: [],
+        assumptions: ['Clients connect via standard network protocols.'],
+        unresolvedQuestions: [],
+        evidenceReferences: [],
+        targetFiles: [],
+        x: 120,
+        y: 280,
+      });
+
+      // 2. Derive nodes from contract decisions
+      let xPos = 370;
+      let yPos = 200;
+
+      for (let i = 0; i < contract.decisions.length; i++) {
+        const d = contract.decisions[i]!;
+        const text = `${d.problemContext} ${d.selectedOptionName || ''} ${d.rationale}`.toLowerCase();
+
+        let category: import('@architectai/domain').GraphNodeCategory = 'service';
+        let tier: 'public' | 'dmz' | 'private_compute' | 'state' | 'external' = 'private_compute';
+
+        if (text.includes('database') || text.includes('datastore') || text.includes('postgres') || text.includes('sqlite') || text.includes('sql') || text.includes('storage') || text.includes('ledger') || text.includes('persistence')) {
+          category = 'datastore';
+          tier = 'state';
+        } else if (text.includes('cache') || text.includes('redis') || text.includes('lock') || text.includes('mutex') || text.includes('memcached')) {
+          category = 'cache';
+          tier = 'dmz';
+        } else if (text.includes('queue') || text.includes('kafka') || text.includes('rabbitmq') || text.includes('sqs') || text.includes('broker') || text.includes('bus')) {
+          category = 'queue';
+          tier = 'private_compute';
+        } else if (text.includes('worker') || text.includes('daemon') || text.includes('consumer') || text.includes('cron') || text.includes('transcode')) {
+          category = 'worker';
+          tier = 'private_compute';
+        } else if (text.includes('gateway') || text.includes('proxy') || text.includes('ingress') || text.includes('router') || text.includes('websocket')) {
+          category = 'gateway';
+          tier = 'dmz';
+        } else if (text.includes('external') || text.includes('bank') || text.includes('third-party') || text.includes('partner')) {
+          category = 'external_system';
+          tier = 'external';
+        }
+
+        const nodeId = `node-${d.id.replace(/^dec-/, '')}`;
+        nodes.push({
+          id: nodeId,
+          label: d.selectedOptionName || d.problemContext,
+          sublabel: d.problemContext,
+          category,
+          tier,
+          origin: 'contract_decision',
+          confidence: 'architectural_decision',
+          sourceDecisionIds: [d.id],
+          sourceConcernIds: contract.discoveredConcerns
+            .filter((c) => text.includes(c.title.toLowerCase()) || (c.dimensions || []).some((dim) => text.includes(dim)))
+            .map((c) => c.id),
+          sourceInvariantIds: contract.invariants
+            .filter((inv) => text.includes(inv.property.toLowerCase()))
+            .map((inv) => inv.id),
+          sourceSpecIds: [],
+          purpose: d.rationale,
+          whySelected: d.rationale,
+          supportedClaim: d.rationale,
+          tradeOffs: d.risksAndTradeoffs || [],
+          assumptions: d.assumptions || [],
+          unresolvedQuestions: d.reconsiderationTriggers || [],
+          evidenceReferences: [],
+          targetFiles: [],
+          x: xPos,
+          y: yPos,
+        });
+
+        xPos += 240;
+        if (xPos > 850) {
+          xPos = 370;
+          yPos += 180;
+        }
+      }
+
+      // 3. Connect Edges along architectural tiers
+      const nonClientNodes = nodes.filter((n) => n.id !== clientNodeId);
+      const ingressOrServices = nonClientNodes.filter((n) => n.category === 'gateway' || n.category === 'service');
+      const entryPoints = ingressOrServices.length > 0 ? ingressOrServices : [nonClientNodes[0]!];
+
+      for (const entry of entryPoints) {
+        edges.push({
+          id: `edge-${clientNodeId}-${entry.id}`,
+          source: clientNodeId,
+          target: entry.id,
+          label: 'Client Requests',
+          protocol: 'HTTPS REST',
+          direction: 'unidirectional',
+          isSelfLoop: false,
+          origin: 'inferred_topology',
+          confidence: 'inferred_proposed',
+          sourceDecisionIds: [],
+          sourceConcernIds: [],
+          sourceInvariantIds: [],
+          sourceSpecIds: [],
+          purpose: `Inbound requests from client to ${entry.label}.`,
+          whySelected: 'Client entry connection.',
+          assumptions: ['Clients communicate via HTTP or secure WebSocket.'],
+          evidenceReferences: [],
+        });
+      }
+
+      // Connect gateway/services to backends (datastores, caches, queues)
+      const backendNodes = nonClientNodes.filter((n) => !entryPoints.includes(n));
+      for (const backend of backendNodes) {
+        const sourceNode = entryPoints[0]!;
+        edges.push({
+          id: `edge-${sourceNode.id}-${backend.id}`,
+          source: sourceNode.id,
+          target: backend.id,
+          label: backend.category === 'datastore' ? 'Read / Write Query' :
+                 backend.category === 'cache' ? 'Cache / Mutex Lock' :
+                 backend.category === 'queue' ? 'Publish Event' : 'Downstream Hop',
+          protocol: backend.category === 'datastore' ? 'SQL / Database Protocol' :
+                    backend.category === 'cache' ? 'TCP Key-Value' : 'AMQP / HTTP',
+          direction: backend.category === 'cache' ? 'bidirectional' : 'unidirectional',
+          isSelfLoop: false,
+          origin: 'inferred_topology',
+          confidence: 'inferred_proposed',
+          sourceDecisionIds: [],
+          sourceConcernIds: [],
+          sourceInvariantIds: [],
+          sourceSpecIds: [],
+          purpose: `Integration between ${sourceNode.label} and ${backend.label}.`,
+          whySelected: 'Inferred operational dependency.',
+          assumptions: [],
+          evidenceReferences: [],
+        });
+      }
+
+      // 4. Boundaries
+      const tiers = Array.from(new Set(nodes.map((n) => n.tier)));
+      for (const t of tiers) {
+        const tierNodes = nodes.filter((n) => n.tier === t);
+        boundaries.push({
+          id: `tb-${t}`,
+          label: t === 'public' ? 'Public Internet Ingress' :
+                 t === 'dmz' ? 'Perimeter / Ingress Services (DMZ)' :
+                 t === 'private_compute' ? 'Protected Application Compute' :
+                 t === 'state' ? 'Persistent State & Data Layer' : 'External Third-Party Perimeter',
+          description: `Isolation tier for ${t} systems.`,
+          tier: t as any,
+          nodeIds: tierNodes.map((n) => n.id),
+          rect: {
+            x: Math.min(...tierNodes.map((n) => n.x)) - 30,
+            y: 50,
+            width: 240,
+            height: 500,
+          },
+        });
+      }
+
+      const projection: ArchitectureGraphProjection = {
+        id: `proj_synth_${contract.id}_rev1`,
+        contractId: contract.id,
+        contractRevision: 1,
+        contractFingerprint: computeContractFingerprint(contract),
+        projectionVersion: '1.0.0',
+        createdAt: new Date().toISOString(),
+        status: 'valid',
+        nodes,
+        edges,
+        boundaries,
+        rationale: `Synthesized topology grounded in ${contract.decisions.length} architectural decisions for ${contract.id}.`,
+        assumptions: contract.assumptions || [],
+        unresolvedQuestions: contract.unresolvedQuestions || [],
+        missingSources: [],
+      };
+
+      const validated = ArchitectureGraphProjectionSchema.parse(projection);
+      return {
+        content: JSON.stringify(validated),
+        data: validated as T,
+      };
+    }
 
     // Generic fallback for any other schema
     const schema = request.schema as {

@@ -562,7 +562,7 @@ export async function createServer(options: ServerOptions = {}) {
   });
 
   // Read-only architecture graph projection endpoint derived from EngineeringContract
-  app.get('/api/runs/:runId/architecture-graph', (req: Request, res: Response) => {
+  app.get('/api/runs/:runId/architecture-graph', async (req: Request, res: Response) => {
     try {
       const run = runStore.findById(req.params.runId);
       if (!run) {
@@ -575,7 +575,7 @@ export async function createServer(options: ServerOptions = {}) {
       const projector = new ArchitectureGraphProjector();
       const revisions = runStore.getContractRevisions(run.id);
       const currentRevision = revisions.length > 0 ? revisions.length : 1;
-      const projection = projector.project(run.contract, { revision: currentRevision });
+      const projection = await projector.project(run.contract, { revision: currentRevision });
 
       return res.json({
         success: true,
@@ -583,6 +583,7 @@ export async function createServer(options: ServerOptions = {}) {
         contractId: run.contract.id,
         contractRevision: currentRevision,
         status: projection.status,
+        contract: run.contract,
         projection,
       });
     } catch (err: unknown) {

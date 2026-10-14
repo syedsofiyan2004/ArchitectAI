@@ -17,6 +17,13 @@ import '../components/studio/ArchitectureStudio.css';
 export const ArchitectureStudioPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const urlContract = searchParams.get('contract');
+  const urlRunId = searchParams.get('runId');
+
+  const [remoteRunData, setRemoteRunData] = useState<{
+    contract: import('@architectai/domain').EngineeringContract;
+    projection: import('@architectai/domain').ArchitectureGraphProjection;
+  } | null>(null);
+
   const [selectedContractId, setSelectedContractId] = useState<string>(
     urlContract && ALL_FIXTURE_CONTRACTS[urlContract] ? urlContract : 'contract-rate-limiter'
   );
@@ -27,9 +34,36 @@ export const ArchitectureStudioPage: React.FC = () => {
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
+  // Load real persisted run if ?runId= is in URL
+  useEffect(() => {
+    if (!urlRunId) {
+      setRemoteRunData(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/runs/${urlRunId}/architecture-graph`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled && data.success && data.contract && data.projection) {
+          setRemoteRunData({
+            contract: data.contract,
+            projection: data.projection,
+          });
+          setSelectedId(null);
+        }
+      })
+      .catch(() => {
+        // ignore fetch error
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [urlRunId]);
+
   // Update URL search param when selected contract changes
   const handleSelectContract = useCallback(
     (contractId: string) => {
+      setRemoteRunData(null);
       setSelectedContractId(contractId);
       setSearchParams({ contract: contractId });
       setSelectedId(null);
@@ -41,6 +75,7 @@ export const ArchitectureStudioPage: React.FC = () => {
   // Sync state if URL search param changes externally
   useEffect(() => {
     if (urlContract && ALL_FIXTURE_CONTRACTS[urlContract] && urlContract !== selectedContractId) {
+      setRemoteRunData(null);
       setSelectedContractId(urlContract);
       setSelectedId(null);
     }
@@ -48,14 +83,16 @@ export const ArchitectureStudioPage: React.FC = () => {
 
   // Authoritative Engineering Contract & Deterministic Graph Projection
   const activeContract = useMemo(() => {
+    if (remoteRunData) return remoteRunData.contract;
     return ALL_FIXTURE_CONTRACTS[selectedContractId] || RATE_LIMITER_FIXTURE_CONTRACT;
-  }, [selectedContractId]);
+  }, [remoteRunData, selectedContractId]);
 
   const projector = useMemo(() => new ArchitectureGraphProjector(), []);
 
   const projection = useMemo(() => {
-    return projector.project(activeContract);
-  }, [projector, activeContract]);
+    if (remoteRunData) return remoteRunData.projection;
+    return projector.projectSync(activeContract, { allowCuratedTemplates: true });
+  }, [remoteRunData, projector, activeContract]);
 
   const nodes = projection.nodes;
   const edges = projection.edges;
