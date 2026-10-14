@@ -23,6 +23,7 @@ export const ArchitectureStudioPage: React.FC = () => {
   });
   const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
+  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   const {
     state: simulation,
@@ -38,6 +39,37 @@ export const ArchitectureStudioPage: React.FC = () => {
   const selectedNode = STUDIO_NODES.find((n) => n.id === selectedId) || null;
   const selectedEdge = STUDIO_EDGES.find((e) => e.id === selectedId) || null;
   const selectedEntity = selectedNode || selectedEdge;
+
+  // Genuine Fit-to-Content calculation
+  const handleFitToContent = useCallback(() => {
+    const container = document.querySelector('.studio-canvas-container');
+    if (!container) return;
+    const w = container.clientWidth;
+    const h = container.clientHeight;
+    if (w <= 0 || h <= 0) return;
+    const scale = Math.min((w - 48) / 1100, (h - 48) / 650, 1.15);
+    const px = (w - 1100 * scale) / 2;
+    const py = (h - 650 * scale) / 2;
+    setZoomLevel(+scale.toFixed(2));
+    setPan({ x: Math.round(px), y: Math.round(py) });
+  }, []);
+
+  // Initial auto-fit and resize listener
+  useEffect(() => {
+    handleFitToContent();
+    const timer = setTimeout(handleFitToContent, 100);
+    window.addEventListener('resize', handleFitToContent);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', handleFitToContent);
+    };
+  }, [handleFitToContent]);
+
+  // Re-fit canvas when inspector or mobile drawer toggles
+  useEffect(() => {
+    const timer = setTimeout(handleFitToContent, 220);
+    return () => clearTimeout(timer);
+  }, [isInspectorOpen, isMobileNavOpen, handleFitToContent]);
 
   const handleSelectNode = useCallback((nodeId: string) => {
     setSelectedId(nodeId);
@@ -70,13 +102,13 @@ export const ArchitectureStudioPage: React.FC = () => {
         }
       } else if (e.key === '+' || e.key === '=') {
         e.preventDefault();
-        setZoomLevel((z) => Math.min(1.8, +(z + 0.1).toFixed(1)));
+        setZoomLevel((z) => Math.min(1.8, +(z + 0.1).toFixed(2)));
       } else if (e.key === '-' || e.key === '_') {
         e.preventDefault();
-        setZoomLevel((z) => Math.max(0.6, +(z - 0.1).toFixed(1)));
+        setZoomLevel((z) => Math.max(0.3, +(z - 0.1).toFixed(2)));
       } else if (e.key === '0') {
         e.preventDefault();
-        setZoomLevel(1.0);
+        handleFitToContent();
       } else if (e.code === 'Space') {
         // Toggle simulation with spacebar
         e.preventDefault();
@@ -86,7 +118,7 @@ export const ArchitectureStudioPage: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, isMobileNavOpen, togglePlay]);
+  }, [selectedId, isMobileNavOpen, togglePlay, handleFitToContent]);
 
   return (
     <div className="architecture-studio-layout">
@@ -98,9 +130,9 @@ export const ArchitectureStudioPage: React.FC = () => {
         onTogglePlay={togglePlay}
         onResetSimulation={reset}
         zoomLevel={zoomLevel}
-        onZoomIn={() => setZoomLevel((z) => Math.min(1.8, +(z + 0.1).toFixed(1)))}
-        onZoomOut={() => setZoomLevel((z) => Math.max(0.6, +(z - 0.1).toFixed(1)))}
-        onZoomReset={() => setZoomLevel(1.0)}
+        onZoomIn={() => setZoomLevel((z) => Math.min(1.8, +(z + 0.1).toFixed(2)))}
+        onZoomOut={() => setZoomLevel((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))}
+        onZoomReset={handleFitToContent}
         isInspectorOpen={isInspectorOpen}
         onToggleInspector={() => setIsInspectorOpen((prev) => !prev)}
       />
@@ -166,6 +198,8 @@ export const ArchitectureStudioPage: React.FC = () => {
             onSelectEdge={handleSelectEdge}
             onClearSelection={handleClearSelection}
             zoomLevel={zoomLevel}
+            pan={pan}
+            onPanChange={setPan}
             packets={packets}
             simulation={simulation}
           />

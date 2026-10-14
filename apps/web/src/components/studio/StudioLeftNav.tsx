@@ -76,7 +76,7 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
         </p>
         <div className="scope-meta-tags font-mono">
           <span className="scope-tag">100 req/60s</span>
-          <span className="scope-tag">Token Bucket</span>
+          <span className="scope-tag">Sliding Window</span>
           <span className="scope-tag">HTTP 429</span>
         </div>
       </div>
@@ -330,24 +330,24 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
       {/* 5. Invariants Checklist */}
       <section className="studio-nav-section" aria-labelledby="invariants-heading">
         <div className="section-label-row">
-          <ShieldCheck size={13} className="text-success" />
+          <ShieldCheck size={13} className="text-secondary" />
           <h3 id="invariants-heading" className="section-label">
-            Contract Invariants (3/3)
+            Planned Invariant Checks (3 planned)
           </h3>
         </div>
 
         <div className="invariants-mini-checklist">
           <div className="invariant-check-row">
-            <CheckCircle2 size={13} className="text-success" />
-            <span>Sliding window burst suppression</span>
+            <span className="font-mono text-xs text-brand">○</span>
+            <span>Sliding window burst suppression (Planned check)</span>
           </div>
           <div className="invariant-check-row">
-            <CheckCircle2 size={13} className="text-success" />
-            <span>Ingress gateway isolation shield</span>
+            <span className="font-mono text-xs text-brand">○</span>
+            <span>Ingress gateway isolation shield (Planned check)</span>
           </div>
           <div className="invariant-check-row">
-            <CheckCircle2 size={13} className="text-success" />
-            <span>Zero SQL queries in hot-path</span>
+            <span className="font-mono text-xs text-brand">○</span>
+            <span>Zero SQL queries in hot-path (Planned check)</span>
           </div>
         </div>
       </section>

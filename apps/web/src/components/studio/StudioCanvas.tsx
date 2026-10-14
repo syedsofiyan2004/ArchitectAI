@@ -8,10 +8,12 @@ import {
   Layers,
   Activity,
   Shield,
-  ArrowRight,
 } from 'lucide-react';
 import { StudioNode, StudioEdge, TrustBoundary, SimulationState } from './types';
 import { SimulatedPacket } from './useSimulation';
+
+export const CANVAS_WIDTH = 1100;
+export const CANVAS_HEIGHT = 650;
 
 interface StudioCanvasProps {
   nodes: StudioNode[];
@@ -22,8 +24,16 @@ interface StudioCanvasProps {
   onSelectEdge: (edgeId: string) => void;
   onClearSelection: () => void;
   zoomLevel: number;
+  pan: { x: number; y: number };
+  onPanChange: (pan: { x: number; y: number }) => void;
   packets: SimulatedPacket[];
   simulation: SimulationState;
+}
+
+interface EdgeRouting {
+  pathData: string;
+  badgeX: number;
+  badgeY: number;
 }
 
 export const StudioCanvas: React.FC<StudioCanvasProps> = ({
@@ -35,33 +45,50 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   onSelectEdge,
   onClearSelection,
   zoomLevel,
+  pan,
+  onPanChange,
   packets,
   simulation,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    // Only pan on background click
-    if ((e.target as HTMLElement).closest('.canvas-node') || (e.target as HTMLElement).closest('.canvas-edge-hit')) {
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    // Only pan on background click, not on nodes or edge hitboxes
+    if (
+      (e.target as HTMLElement).closest('.canvas-node') ||
+      (e.target as HTMLElement).closest('.canvas-edge-hit') ||
+      (e.target as HTMLElement).closest('.canvas-edge-badge-group')
+    ) {
       return;
     }
     setIsPanning(true);
     setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
   };
 
-  const handleMouseMove = (e: React.MouseEvent) => {
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!isPanning) return;
-    setPan({
+    onPanChange({
       x: e.clientX - dragStart.x,
       y: e.clientY - dragStart.y,
     });
   };
 
-  const handleMouseUp = () => {
-    setIsPanning(false);
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (isPanning) {
+      setIsPanning(false);
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        // ignore
+      }
+    }
   };
 
   const getNodeIcon = (category: string) => {
@@ -81,21 +108,56 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }
   };
 
-  // Find node coordinates helper
-  const getNodeCoord = (nodeId: string) => {
-    const node = nodes.find((n) => n.id === nodeId);
-    return node ? { x: node.x, y: node.y } : { x: 50, y: 50 };
+  // Pre-calculated collision-free edge routing
+  const getEdgeRouting = (edgeId: string): EdgeRouting => {
+    switch (edgeId) {
+      case 'edge-client-gw':
+        return {
+          pathData: 'M 230 320 L 285 320',
+          badgeX: 257.5,
+          badgeY: 260,
+        };
+      case 'edge-gw-compute':
+        return {
+          pathData: 'M 485 305 C 510 305, 520 235, 545 235',
+          badgeX: 515,
+          badgeY: 270,
+        };
+      case 'edge-gw-redis':
+        return {
+          pathData: 'M 485 290 C 560 290, 680 120, 835 185',
+          badgeX: 650,
+          badgeY: 120,
+        };
+      case 'edge-compute-db':
+        return {
+          pathData: 'M 745 245 C 790 245, 790 450, 835 450',
+          badgeX: 790,
+          badgeY: 345,
+        };
+      default:
+        return {
+          pathData: 'M 0 0 L 100 100',
+          badgeX: 50,
+          badgeY: 50,
+        };
+    }
   };
 
   return (
     <div
       ref={containerRef}
       className={`studio-canvas-container ${isPanning ? 'is-panning' : ''}`}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
+      onPointerCancel={handlePointerUp}
       onClick={(e) => {
-        if (e.target === containerRef.current || (e.target as HTMLElement).classList.contains('canvas-viewport')) {
+        if (
+          e.target === containerRef.current ||
+          (e.target as HTMLElement).classList.contains('canvas-viewport') ||
+          (e.target as HTMLElement).classList.contains('canvas-boundaries-layer')
+        ) {
           onClearSelection();
         }
       }}
@@ -105,8 +167,10 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       <div
         className="canvas-viewport"
         style={{
+          width: CANVAS_WIDTH,
+          height: CANVAS_HEIGHT,
           transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoomLevel})`,
-          transformOrigin: '50% 50%',
+          transformOrigin: '0 0',
         }}
       >
         {/* 1. Trust Boundaries Layer (Background Regions) */}
@@ -116,15 +180,15 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
               key={tb.id}
               className={`trust-boundary-box boundary-${tb.tier}`}
               style={{
-                left: `${tb.rect.x}%`,
-                top: `${tb.rect.y}%`,
-                width: `${tb.rect.width}%`,
-                height: `${tb.rect.height}%`,
+                left: `${tb.rect.x}px`,
+                top: `${tb.rect.y}px`,
+                width: `${tb.rect.width}px`,
+                height: `${tb.rect.height}px`,
               }}
             >
               <div className="boundary-header">
                 <Shield size={12} className="boundary-icon" />
-                <span className="boundary-title font-mono">{tb.label}</span>
+                <span className="boundary-title">{tb.label}</span>
               </div>
               <p className="boundary-desc">{tb.description}</p>
             </div>
@@ -132,7 +196,12 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         </div>
 
         {/* 2. SVG Edge Connections & Request Particles Layer */}
-        <svg className="canvas-svg-layer" viewBox="0 0 1000 700" preserveAspectRatio="none">
+        <svg
+          className="canvas-svg-layer"
+          width={CANVAS_WIDTH}
+          height={CANVAS_HEIGHT}
+          viewBox={`0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}`}
+        >
           <defs>
             <marker
               id="arrowhead"
@@ -160,30 +229,14 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
 
           {/* Connection Lines */}
           {edges.map((edge) => {
-            const src = getNodeCoord(edge.source);
-            const tgt = getNodeCoord(edge.target);
             const isSelected = selectedId === edge.id;
-
-            // Map 0-100 coordinates to SVG viewBox 1000x700
-            const x1 = src.x * 10;
-            const y1 = src.y * 7;
-            const x2 = tgt.x * 10;
-            const y2 = tgt.y * 7;
-
-            // Curved cubic bezier
-            const dx = (x2 - x1) * 0.5;
-            const pathData = `M ${x1} ${y1} C ${x1 + dx} ${y1}, ${x2 - dx} ${y2}, ${x2} ${y2}`;
-
-            // Calculate bezier position for badge to avoid collisions
-            const t = edge.id === 'edge-gw-redis' ? 0.74 : edge.id === 'edge-gw-compute' ? 0.38 : 0.5;
-            const bx = (1 - t) * (1 - t) * (1 - t) * x1 + 3 * (1 - t) * (1 - t) * t * (x1 + dx) + 3 * (1 - t) * t * t * (x2 - dx) + t * t * t * x2;
-            const by = (1 - t) * (1 - t) * (1 - t) * y1 + 3 * (1 - t) * (1 - t) * t * y1 + 3 * (1 - t) * t * t * y2 + t * t * t * y2;
+            const routing = getEdgeRouting(edge.id);
 
             return (
               <g key={edge.id} className="canvas-edge-group">
                 {/* Invisible wide hit area for easy clicking */}
                 <path
-                  d={pathData}
+                  d={routing.pathData}
                   className="canvas-edge-hit"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -193,21 +246,22 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
 
                 {/* Visible base path */}
                 <path
-                  d={pathData}
+                  d={routing.pathData}
                   className={`canvas-edge-line ${isSelected ? 'selected' : ''}`}
+                  markerEnd={isSelected ? 'url(#arrowhead-selected)' : 'url(#arrowhead)'}
                 />
 
                 {/* Animated edge flow pulse when simulation is running */}
                 {simulation.isRunning && (
                   <path
-                    d={pathData}
+                    d={routing.pathData}
                     className={`canvas-edge-pulse ${simulation.burstDetected ? 'pulse-burst' : ''}`}
                   />
                 )}
 
-                {/* Midpoint Protocol Badge */}
+                {/* Protocol Badge (Clean, un-occluded position) */}
                 <g
-                  transform={`translate(${bx}, ${by})`}
+                  transform={`translate(${routing.badgeX}, ${routing.badgeY})`}
                   className="canvas-edge-badge-group"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -216,9 +270,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                   style={{ cursor: 'pointer' }}
                 >
                   <rect
-                    x="-65"
+                    x="-60"
                     y="-11"
-                    width="130"
+                    width="120"
                     height="22"
                     rx="4"
                     className={`edge-badge-bg ${isSelected ? 'selected' : ''}`}
@@ -234,8 +288,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           {/* 3. Simulated Request Packets */}
           {simulation.isRunning &&
             packets.map((pkt) => {
-              const currentX = (pkt.sourceX + (pkt.targetX - pkt.sourceX) * pkt.progress) * 10;
-              const currentY = (pkt.sourceY + (pkt.targetY - pkt.sourceY) * pkt.progress) * 7;
+              const currentX = pkt.sourceX + (pkt.targetX - pkt.sourceX) * pkt.progress;
+              const currentY = pkt.sourceY + (pkt.targetY - pkt.sourceY) * pkt.progress;
 
               return (
                 <circle
@@ -243,13 +297,15 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                   cx={currentX}
                   cy={currentY}
                   r={pkt.status === 'throttled' ? 4 : 3}
-                  className={`sim-packet-circle ${pkt.status === 'throttled' ? 'packet-throttled' : 'packet-allowed'}`}
+                  className={`sim-packet-circle ${
+                    pkt.status === 'throttled' ? 'packet-throttled' : 'packet-allowed'
+                  }`}
                 />
               );
             })}
         </svg>
 
-        {/* 4. Interactive Node Cards Layer */}
+        {/* 4. Interactive Node Cards Layer (200px width, zero overlap) */}
         <div className="canvas-nodes-layer">
           {nodes.map((node) => {
             const isSelected = selectedId === node.id;
@@ -268,8 +324,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                   isOverloaded ? 'overloaded' : ''
                 }`}
                 style={{
-                  left: `${node.x}%`,
-                  top: `${node.y}%`,
+                  left: `${node.x}px`,
+                  top: `${node.y}px`,
                 }}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -298,20 +354,20 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                 <p className="node-subtitle">{node.sublabel}</p>
 
                 {/* Key Metrics Strip */}
-                <div className="node-metrics-strip font-mono">
+                <div className="node-metrics-strip">
                   <div className="node-metric-cell">
                     <span className="metric-k">{node.metrics.label1}</span>
-                    <span className="metric-v">{node.metrics.value1}</span>
+                    <span className="metric-v font-mono">{node.metrics.value1}</span>
                   </div>
                   <div className="node-metric-cell">
                     <span className="metric-k">{node.metrics.label2}</span>
                     <span
-                      className={`metric-v ${
+                      className={`metric-v font-mono ${
                         isOverloaded && node.metrics.label2.includes('Latency') ? 'text-danger' : ''
                       }`}
                     >
                       {isOverloaded && node.metrics.label2.includes('Latency')
-                        ? '148 ms'
+                        ? '148 ms (High)'
                         : node.metrics.value2}
                     </span>
                   </div>
@@ -330,7 +386,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       </div>
 
       {/* Canvas Overlay Legend */}
-      <div className="canvas-bottom-legend font-mono" aria-label="Architecture Legend">
+      <div className="canvas-bottom-legend" aria-label="Architecture Legend">
         <div className="legend-item">
           <span className="legend-swatch swatch-boundary" />
           <span>Trust Boundaries</span>

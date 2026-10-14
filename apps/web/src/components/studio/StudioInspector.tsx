@@ -157,12 +157,12 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
                 <strong className="stat-number">4 Connections</strong>
               </div>
               <div className="stat-card">
-                <span className="stat-label">Invariants</span>
-                <strong className="stat-number text-success">3 Verified</strong>
+                <span className="stat-label">Planned Invariants</span>
+                <strong className="stat-number text-brand">3 checks planned</strong>
               </div>
               <div className="stat-card">
-                <span className="stat-label">P99 Added Latency</span>
-                <strong className="stat-number text-brand">&lt; 0.8 ms</strong>
+                <span className="stat-label">Modeled Baseline Latency</span>
+                <strong className="stat-number text-muted">&lt; 0.8 ms (Assumed)</strong>
               </div>
             </div>
 
@@ -417,8 +417,8 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
                     </div>
 
                     <div className="verif-status-badge font-mono">
-                      <CheckCircle2 size={13} className="text-success" />
-                      <span>Ready for compilation into VerificationPlan</span>
+                      <span className="text-brand">○</span>
+                      <span>Planned Verification Check (Not yet executed)</span>
                     </div>
                   </div>
                 </div>

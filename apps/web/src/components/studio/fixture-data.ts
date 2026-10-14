@@ -9,38 +9,39 @@ export const STUDIO_REQUIREMENT = {
   rawIntent:
     'Rate limit each authenticated tenant to 100 API requests per minute with burst tolerance up to 20 requests over limit, dropping abusive traffic with HTTP 429 without degrading API latency.',
   project: 'Payments Gateway Platform',
-  revision: 'v2.4 (Simulated)',
+  revision: 'v2.4 (Simulated Architecture)',
   contractId: 'contract-studio-demo-001',
 };
 
+// Canvas coordinates in normalized 1100 x 650 coordinate system
 export const TRUST_BOUNDARIES: TrustBoundary[] = [
   {
     id: 'tb-untrusted',
     label: 'Untrusted Internet Perimeter',
     description: 'Public clients, mobile applications, and external partner APIs.',
     tier: 'public',
-    rect: { x: 3, y: 10, width: 20, height: 80 },
+    rect: { x: 20, y: 30, width: 220, height: 580 },
   },
   {
     id: 'tb-dmz',
     label: 'Ingress & Edge DMZ',
     description: 'TLS termination, edge rate limiting, and traffic policy enforcement.',
     tier: 'dmz',
-    rect: { x: 26, y: 10, width: 22, height: 80 },
+    rect: { x: 270, y: 30, width: 230, height: 580 },
   },
   {
     id: 'tb-private-vpc',
     label: 'Private VPC Compute Tier',
     description: 'Internal microservices and business logic execution behind gateway shields.',
     tier: 'private_compute',
-    rect: { x: 51, y: 10, width: 22, height: 80 },
+    rect: { x: 530, y: 30, width: 230, height: 580 },
   },
   {
     id: 'tb-state-tier',
     label: 'State & Storage Tier',
     description: 'Distributed cache coordination and persistent relational data storage.',
     tier: 'state',
-    rect: { x: 76, y: 10, width: 21, height: 80 },
+    rect: { x: 790, y: 30, width: 290, height: 580 },
   },
 ];
 
@@ -51,8 +52,8 @@ export const STUDIO_NODES: StudioNode[] = [
     sublabel: 'Web SPAs, Mobile & Partner APIs',
     category: 'client',
     tierBadge: 'Ingress Perimeter',
-    x: 12,
-    y: 50,
+    x: 130,
+    y: 320,
     status: 'active',
     purpose:
       'Origin of all inbound API traffic originating from external untrusted networks across distributed tenant accounts.',
@@ -99,15 +100,16 @@ if (response.status === 429) {
       operator: 'gte',
       expected: '50ms jitter',
       testStrategy: 'synthetic_burst_test',
-      verificationDescription: 'Execute mock 429 flood and verify client delay interval exceeds Retry-After specification.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Execute mock 429 flood and verify client delay interval exceeds Retry-After specification.',
     },
     metrics: {
       label1: 'Active Tenants',
-      value1: '1,420',
-      label2: 'Avg Request Rate',
-      value2: '84 req/s',
-      label3: 'Traffic Entropy',
-      value3: 'High Burst',
+      value1: '1,420 (Simulated)',
+      label2: 'Avg Ingress Rate',
+      value2: '84 req/s (Modeled)',
+      label3: 'Traffic Profile',
+      value3: 'Boundary Burst Pattern',
     },
   },
 
@@ -117,8 +119,8 @@ if (response.status === 429) {
     sublabel: 'Envoy / NGINX Rate Limit Filter',
     category: 'gateway',
     tierBadge: 'Edge DMZ Layer',
-    x: 37,
-    y: 50,
+    x: 385,
+    y: 320,
     status: 'healthy',
     purpose:
       'First line of defense. Terminates TLS, validates tenant identity, executes token-bucket check against Redis, and returns immediate HTTP 429 before requests reach compute nodes.',
@@ -159,7 +161,7 @@ if (response.status === 429) {
       },
     ],
     implementation: {
-      technology: 'Envoy Proxy Rate Limit Filter / Custom Express Middleware',
+      technology: 'Envoy Proxy Rate Limit Filter / Express Middleware',
       targetFiles: ['apps/web/server/middleware/rate-limiter.ts', 'infra/envoy/rate-limit.yaml'],
       configuration: {
         'rate-limit-header': 'X-RateLimit-Remaining',
@@ -183,15 +185,16 @@ if (!allowed) {
       operator: 'eq',
       expected: '0 compute invocations on 429',
       testStrategy: 'process_isolation_probe',
-      verificationDescription: 'Dispatch 150 requests under 100 limit; assert downstream worker spy records exactly 100 calls.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Dispatch 150 requests under 100 limit; assert downstream worker spy records exactly 100 calls.',
     },
     metrics: {
       label1: 'Gate Latency P99',
-      value1: '0.8 ms',
-      label2: 'Rejection Accuracy',
-      value2: '100.0%',
-      label3: 'CPU Utilization',
-      value3: '14.2%',
+      value1: '0.8 ms (Modeled SLA)',
+      label2: 'Filter Accuracy',
+      value2: '100% (Designed)',
+      label3: 'Overhead Budget',
+      value3: '< 1.5 ms (Assumed)',
     },
   },
 
@@ -201,8 +204,8 @@ if (!allowed) {
     sublabel: '3x Node.js / TypeScript Instances',
     category: 'compute',
     tierBadge: 'Private VPC Compute',
-    x: 62,
-    y: 32,
+    x: 645,
+    y: 220,
     status: 'healthy',
     purpose:
       'Executes business logic, transactional operations, and core application workflows in a horizontally scalable stateless cluster.',
@@ -259,29 +262,30 @@ app.post('/api/v1/charge', async (req, res) => {
       operator: 'lte',
       expected: '100 requests total',
       testStrategy: 'distributed_round_robin_test',
-      verificationDescription: 'Distribute 150 requests round-robin across instances; verify total completed does not exceed 100.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Distribute 150 requests round-robin across instances; verify total completed does not exceed 100.',
     },
     metrics: {
-      label1: 'Active Pods',
-      value1: '3 healthy',
+      label1: 'Modeled Capacity',
+      value1: '100 req / 60s',
       label2: 'Event Loop Lag',
-      value2: '1.4 ms',
-      label3: 'Memory Usage',
-      value3: '142 MB / node',
+      value2: '1.4 ms (Assumed)',
+      label3: 'Pod Fleet',
+      value3: '3 stateless nodes',
     },
   },
 
   {
     id: 'node-redis',
     label: 'Redis Distributed State',
-    sublabel: 'Redis 7.2 Cluster (Sliding Window)',
+    sublabel: 'Redis 7.2 Cluster (Sliding Window Log)',
     category: 'cache',
     tierBadge: 'Distributed State',
-    x: 87,
-    y: 32,
+    x: 935,
+    y: 190,
     status: 'healthy',
     purpose:
-      'Atomic in-memory counter and timestamp coordination store. Evaluates sliding-window token bucket quotas using atomic Lua scripts in < 1ms.',
+      'Atomic in-memory counter and timestamp coordination store. Evaluates sliding-window quotas using atomic Lua scripts in < 1ms.',
     whySelected:
       'Sub-millisecond single-threaded atomicity eliminates lost updates and race conditions across concurrent multi-instance API requests.',
     tradeOffs: [
@@ -295,7 +299,7 @@ app.post('/api/v1/charge', async (req, res) => {
         level: 'L2',
         description: 'Transient tenant keys accumulate without TTL expiration, filling maxmemory.',
         consequence: 'Redis stops accepting writes (OOM command error) or evicts critical session keys.',
-        mitigation: 'Set strict key TTL matching window length (`EXPIRE 65`) and configure `maxmemory-policy volatile-lru`.',
+        mitigation: 'Set strict key TTL matching window length (EXPIRE 65) and configure maxmemory-policy volatile-lru.',
       },
       {
         id: 'fm-rd2',
@@ -303,7 +307,7 @@ app.post('/api/v1/charge', async (req, res) => {
         level: 'L1',
         description: 'Executing GET -> CHECK -> INCR as separate network commands allows interleaved requests.',
         consequence: 'Tenants exceed quota during simultaneous microsecond bursts.',
-        mitigation: 'Package evaluation into an atomic Redis Lua script (`EVALSHA`) executed in a single atomic cycle.',
+        mitigation: 'Package evaluation into an atomic Redis Lua script (EVALSHA) executed in a single atomic cycle.',
       },
     ],
     alternativesConsidered: [
@@ -327,7 +331,7 @@ app.post('/api/v1/charge', async (req, res) => {
         'key-prefix': 'rl:tenant:',
         'window-ttl': '65s',
       },
-      codeSnippet: `-- Atomic sliding-window token bucket script
+      codeSnippet: `-- Atomic sliding-window log script
 local key = KEYS[1]
 local now = tonumber(ARGV[1])
 local window = tonumber(ARGV[2])
@@ -352,15 +356,15 @@ end`,
       expected: '100 req in any 60s span',
       testStrategy: 'adversarial_boundary_attack',
       verificationDescription:
-        'Dispatch 80 requests at t=59s followed by 80 requests at t=61s. Assert total allowed across both is exactly 100 (60 rejected).',
+        'PLANNED VERIFICATION SPEC: Dispatch 80 requests at t=59s followed by 80 requests at t=61s. Assert total allowed across both is exactly 100 (60 rejected with HTTP 429).',
     },
     metrics: {
-      label1: 'Ops / Second',
-      value1: '1,240 ops/s',
-      label2: 'Memory In-Use',
-      value2: '18.4 MB',
-      label3: 'Hit Latency P99',
-      value3: '0.42 ms',
+      label1: 'Check Latency P99',
+      value1: '0.42 ms (Modeled SLA)',
+      label2: 'Memory Footprint',
+      value2: '~18 MB / 10k tenants (Est)',
+      label3: 'Atomic Script',
+      value3: 'Lua 5.1 ZREMRANGE',
     },
   },
 
@@ -370,8 +374,8 @@ end`,
     sublabel: 'PostgreSQL 16 (Relational DB)',
     category: 'datastore',
     tierBadge: 'Persistent Storage',
-    x: 87,
-    y: 68,
+    x: 935,
+    y: 460,
     status: 'healthy',
     purpose:
       'Authoritative persistent storage for tenant account configurations, subscription tiers, enterprise custom quotas, and compliance audit logs.',
@@ -418,15 +422,16 @@ WHERE tenant_id = $1 AND active = true;`,
       operator: 'eq',
       expected: '0 SQL queries / req',
       testStrategy: 'db_connection_spy',
-      verificationDescription: 'Execute 1,000 cached API requests; verify PostgreSQL query count strictly equals 0.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Execute 1,000 cached API requests; verify PostgreSQL query count strictly equals 0.',
     },
     metrics: {
-      label1: 'Connection Pool',
-      value1: '12 / 100 used',
-      label2: 'Query Latency',
-      value2: '2.1 ms',
-      label3: 'Storage Size',
-      value3: '4.2 GB',
+      label1: 'Pool Size',
+      value1: '20 connections (Target)',
+      label2: 'Hotpath Access',
+      value2: '0 queries / req (Invariant)',
+      label3: 'Audit Mode',
+      value3: 'Async batch queue',
     },
   },
 ];
@@ -437,8 +442,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
     source: 'node-clients',
     target: 'node-gateway',
     label: 'HTTPS / TLS 1.3 Ingress',
-    protocol: 'HTTPS / TLS 1.3 (TCP 443)',
-    latencySla: '< 15ms WAN',
+    protocol: 'HTTPS / TLS 1.3',
+    latencySla: '< 15ms WAN (Target)',
     direction: 'unidirectional',
     purpose: 'Transports external encrypted client API requests to the edge ingress gateway.',
     whySelected: 'Industry-standard secure transport with HTTP/2 multiplexing for efficient connection reuse.',
@@ -478,7 +483,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
       operator: 'eq',
       expected: '100% TLS coverage',
       testStrategy: 'port_scanner_probe',
-      verificationDescription: 'Assert port 80 connections reject non-redirected payloads.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Assert port 80 connections reject non-redirected payloads.',
     },
   },
 
@@ -487,8 +493,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
     source: 'node-gateway',
     target: 'node-redis',
     label: 'Atomic Quota Check (RESP3)',
-    protocol: 'Redis RESP3 (TCP 6379)',
-    latencySla: '< 1.0ms Internal',
+    protocol: 'RESP3 Redis',
+    latencySla: '< 1.0ms SLA (Modeled)',
     direction: 'bidirectional',
     purpose: 'Executes sub-millisecond atomic sliding-window Lua check before request routing.',
     whySelected: 'Lowest latency synchronous coordination protocol with pipeline support.',
@@ -519,7 +525,7 @@ export const STUDIO_EDGES: StudioEdge[] = [
       configuration: {
         'connect-timeout': '1000ms',
         'command-timeout': '3ms',
-        'max-retries': '0', // No retries on critical path!
+        'max-retries': '0',
       },
     },
     verification: {
@@ -529,7 +535,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
       operator: 'lte',
       expected: '1.5ms P99',
       testStrategy: 'latency_benchmark_suite',
-      verificationDescription: 'Benchmark 10,000 simulated checks; assert P99 latency <= 1.5ms.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Benchmark 10,000 simulated checks; assert P99 latency <= 1.5ms.',
     },
   },
 
@@ -538,8 +545,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
     source: 'node-gateway',
     target: 'node-compute',
     label: 'Shielded Routing (Internal HTTP/2)',
-    protocol: 'Internal HTTP/2 VPC (TCP 8080)',
-    latencySla: '< 2.0ms Internal',
+    protocol: 'Internal HTTP/2',
+    latencySla: '< 2.0ms (Modeled)',
     direction: 'unidirectional',
     purpose: 'Routes permitted requests directly to available compute workers across private VPC network.',
     whySelected: 'HTTP/2 multiplexing allows hundreds of concurrent requests over single persistent TCP connections.',
@@ -579,7 +586,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
       operator: 'lte',
       expected: '100 req/min',
       testStrategy: 'network_packet_counter',
-      verificationDescription: 'Verify compute ingress traffic graph drops to zero when tenant hits limit.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Verify compute ingress traffic drops to zero when tenant hits limit.',
     },
   },
 
@@ -588,8 +596,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
     source: 'node-compute',
     target: 'node-postgres',
     label: 'Tenant Config & Audit SQL',
-    protocol: 'PostgreSQL Wire Protocol / PgBouncer (TCP 5432)',
-    latencySla: '< 5.0ms Internal',
+    protocol: 'PostgreSQL Wire',
+    latencySla: '< 5.0ms (Target)',
     direction: 'bidirectional',
     purpose: 'Asynchronously records rate limit violation audit trails and loads tenant tier metadata.',
     whySelected: 'Guarantees reliable persistence of enterprise compliance audit logs without blocking request latency.',
@@ -629,7 +637,8 @@ export const STUDIO_EDGES: StudioEdge[] = [
       operator: 'eq',
       expected: 'Zero API degradation during DB outage',
       testStrategy: 'fault_injection_db_kill',
-      verificationDescription: 'Terminate PostgreSQL during active traffic flood; verify rate limiter continues serving 429/200 cleanly.',
+      verificationDescription:
+        'PLANNED VERIFICATION SPEC: Terminate PostgreSQL during active traffic flood; verify rate limiter continues serving 429/200 cleanly.',
     },
   },
 ];

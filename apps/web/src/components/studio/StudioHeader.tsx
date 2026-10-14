@@ -115,7 +115,7 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             <span className="stat-val">{simulation.timeInWindowSec.toFixed(1)}s</span>
             <span className="stat-sep">•</span>
             <span className="stat-label">P99:</span>
-            <span className="stat-val text-success">0.8ms</span>
+            <span className="stat-val text-success">~0.8ms (modeled)</span>
           </div>
         </div>
       </div>
@@ -146,8 +146,8 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             type="button"
             className="studio-btn-icon"
             onClick={onZoomReset}
-            title="Reset Zoom to Fit"
-            aria-label="Reset Zoom to Fit"
+            title="Fit to View"
+            aria-label="Fit to View"
           >
             <Maximize2 size={13} />
           </button>
