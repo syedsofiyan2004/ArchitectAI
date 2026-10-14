@@ -10,6 +10,7 @@ import { ArchitecturePage } from './pages/ArchitecturePage';
 import { VerificationPage } from './pages/VerificationPage';
 import { ImplementationPage } from './pages/ImplementationPage';
 import { ChangesPage } from './pages/ChangesPage';
+import { ArchitectureStudioPage } from './pages/ArchitectureStudioPage';
 import { ExamplesModal } from './components/layout/ExamplesModal';
 import './App.css';
 
@@ -29,6 +30,10 @@ export function App() {
               path="/new"
               element={<NewAnalysisPage onOpenExamples={() => setIsExamplesOpen(true)} />}
             />
+            {/* Architecture Studio Prototype Route */}
+            <Route path="/studio" element={<ArchitectureStudioPage />} />
+            <Route path="/prototype/studio" element={<ArchitectureStudioPage />} />
+
             <Route path="/runs/:runId" element={<RunLayout />}>
               <Route index element={<ReviewPage />} />
               <Route path="architecture" element={<ArchitecturePage />} />
