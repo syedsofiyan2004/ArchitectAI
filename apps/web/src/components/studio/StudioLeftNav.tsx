@@ -1,4 +1,4 @@
-// ArchitectAI Architecture Studio Prototype — Left Navigation & Simulation Panel
+// ArchitectAI Architecture Studio Prototype — Left Navigation & Scope Panel
 import React from 'react';
 import {
   Server,
@@ -11,12 +11,14 @@ import {
   Pause,
   RotateCcw,
   AlertTriangle,
-  CheckCircle2,
   Sliders,
   Network,
   ShieldCheck,
   Info,
+  Workflow,
+  Radio,
 } from 'lucide-react';
+import type { EngineeringContract } from '@architectai/domain';
 import { StudioNode, StudioEdge, SimulationState, SimulationAlgorithm, TrafficScenario } from './types';
 
 interface StudioLeftNavProps {
@@ -31,6 +33,8 @@ interface StudioLeftNavProps {
   onSetSpeed: (speed: number) => void;
   onTogglePlay: () => void;
   onResetSimulation: () => void;
+  activeContract?: EngineeringContract;
+  simulationAvailable?: boolean;
 }
 
 export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
@@ -45,6 +49,8 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
   onSetSpeed,
   onTogglePlay,
   onResetSimulation,
+  activeContract,
+  simulationAvailable = false,
 }) => {
   const getNodeIcon = (category: string) => {
     switch (category) {
@@ -53,15 +59,24 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
       case 'gateway':
         return <Layers size={13} />;
       case 'compute':
+      case 'service':
         return <Cpu size={13} />;
       case 'cache':
         return <Activity size={13} />;
       case 'datastore':
         return <Database size={13} />;
+      case 'queue':
+        return <Workflow size={13} />;
+      case 'worker':
+        return <Radio size={13} />;
       default:
         return <Server size={13} />;
     }
   };
+
+  const reqTitle = activeContract?.requirement.context?.title || activeContract?.id || 'Multi-Tenant Rate Limiting';
+  const reqIntent = activeContract?.requirement.rawIntent || 'Rate limit each authenticated tenant to 100 API requests per minute.';
+  const constraints: string[] = activeContract?.requirement.explicitConstraints || ['100 req/60s', 'Sliding Window', 'HTTP 429'];
 
   return (
     <aside className="studio-left-nav" aria-label="Project Scope and Simulation Controller">
@@ -70,163 +85,154 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
         <div className="scope-header">
           <span className="scope-kicker font-mono">SPECIFIED REQUIREMENT</span>
         </div>
-        <h2 className="scope-title">Multi-Tenant Rate Limiting</h2>
+        <h2 className="scope-title">{reqTitle}</h2>
         <p className="scope-intent">
-          "Rate limit each authenticated tenant to 100 API requests per minute with burst tolerance up to 20 requests over limit."
+          "{reqIntent}"
         </p>
         <div className="scope-meta-tags font-mono">
-          <span className="scope-tag">100 req/60s</span>
-          <span className="scope-tag">Sliding Window</span>
-          <span className="scope-tag">HTTP 429</span>
+          {constraints.map((c: string, idx: number) => (
+            <span key={idx} className="scope-tag">
+              {c.length > 28 ? `${c.slice(0, 26)}...` : c}
+            </span>
+          ))}
         </div>
       </div>
 
-      {/* 2. Interactive Simulation Controller */}
-      <section className="studio-nav-section" aria-labelledby="sim-controller-heading">
-        <div className="section-label-row">
-          <Sliders size={13} className="text-brand" />
-          <h3 id="sim-controller-heading" className="section-label">
-            Interactive Simulation
-          </h3>
-        </div>
-
-        <div className="sim-disclaimer-box" role="note">
-          <Info size={12} className="disclaimer-icon" />
-          <span className="disclaimer-text">
-            <strong>EDUCATIONAL SIMULATION</strong> — Models distributed window hazard suppression. Not measured production telemetry.
-          </span>
-        </div>
-
-        {/* Algorithm Selection */}
-        <div className="sim-control-group">
-          <label className="sim-label font-mono">Rate Limiting Algorithm</label>
-          <div className="sim-pill-selector">
-            <button
-              type="button"
-              className={`sim-pill-btn ${simulation.algorithm === 'ROLLING_WINDOW' ? 'active' : ''}`}
-              onClick={() => onSetAlgorithm('ROLLING_WINDOW')}
-            >
-              <span className="pill-dot text-brand">●</span>
-              <span>Sliding Window</span>
-              <span className="pill-badge-rec font-mono">REC</span>
-            </button>
-            <button
-              type="button"
-              className={`sim-pill-btn ${simulation.algorithm === 'FIXED_WINDOW' ? 'active vulnerable' : ''}`}
-              onClick={() => onSetAlgorithm('FIXED_WINDOW')}
-            >
-              <span className="pill-dot text-warning">●</span>
-              <span>Fixed Window</span>
-              <span className="pill-badge-vuln font-mono">DEFECT</span>
-            </button>
+      {/* 2. Interactive Simulation Controller (When Available) */}
+      {simulationAvailable ? (
+        <section className="studio-nav-section" aria-labelledby="sim-controller-heading">
+          <div className="section-label-row">
+            <Sliders size={13} className="text-brand" />
+            <h3 id="sim-controller-heading" className="section-label">
+              Interactive Simulation
+            </h3>
           </div>
-        </div>
 
-        {/* Traffic Scenario */}
-        <div className="sim-control-group">
-          <label className="sim-label font-mono">Traffic Pattern</label>
-          <div className="scenario-select-grid">
-            <button
-              type="button"
-              className={`scenario-btn ${simulation.scenario === 'BOUNDARY_SPIKE' ? 'active' : ''}`}
-              onClick={() => onSetScenario('BOUNDARY_SPIKE')}
-              title="80 requests at t=59s followed by 80 requests at t=61s"
-            >
-              <strong className="scenario-title">Boundary Spike</strong>
-              <span className="scenario-desc">t=59s & t=61s burst</span>
-            </button>
-            <button
-              type="button"
-              className={`scenario-btn ${simulation.scenario === 'STEADY' ? 'active' : ''}`}
-              onClick={() => onSetScenario('STEADY')}
-              title="Normal smooth traffic under limit"
-            >
-              <strong className="scenario-title">Steady Traffic</strong>
-              <span className="scenario-desc">Smooth 15 req/s</span>
-            </button>
-            <button
-              type="button"
-              className={`scenario-btn ${simulation.scenario === 'BURST_ATTACK' ? 'active' : ''}`}
-              onClick={() => onSetScenario('BURST_ATTACK')}
-              title="Sudden continuous abusive flood"
-            >
-              <strong className="scenario-title">Abusive Flood</strong>
-              <span className="scenario-desc">150 req burst</span>
-            </button>
+          <div className="sim-disclaimer-box" role="note">
+            <Info size={12} className="disclaimer-icon" />
+            <span className="disclaimer-text">
+              <strong>EDUCATIONAL SIMULATION</strong> — Models distributed window hazard suppression. Not measured production telemetry.
+            </span>
           </div>
-        </div>
 
-        {/* Playback Controls & Speed */}
-        <div className="sim-playback-row">
-          <button
-            type="button"
-            className="sim-play-btn"
-            onClick={onTogglePlay}
-            aria-label={simulation.isRunning ? 'Pause Simulation' : 'Run Simulation'}
-          >
-            {simulation.isRunning ? <Pause size={13} /> : <Play size={13} />}
-            <span>{simulation.isRunning ? 'Pause' : 'Run'}</span>
-          </button>
-          <button
-            type="button"
-            className="sim-reset-btn"
-            onClick={onResetSimulation}
-            title="Reset Simulation State"
-            aria-label="Reset Simulation State"
-          >
-            <RotateCcw size={13} />
-            <span>Reset</span>
-          </button>
-          <div className="sim-speed-toggles font-mono">
-            {[1, 2, 5].map((s) => (
+          {/* Algorithm Selection */}
+          <div className="sim-control-group">
+            <label className="sim-label font-mono">Rate Limiting Algorithm</label>
+            <div className="sim-pill-selector">
               <button
-                key={s}
                 type="button"
-                className={`speed-btn ${simulation.speed === s ? 'active' : ''}`}
-                onClick={() => onSetSpeed(s)}
+                className={`sim-pill-btn ${simulation.algorithm === 'ROLLING_WINDOW' ? 'active' : ''}`}
+                onClick={() => onSetAlgorithm('ROLLING_WINDOW')}
               >
-                {s}x
+                <span className="pill-dot text-brand">●</span>
+                <span>Sliding Window</span>
+                <span className="pill-badge-rec font-mono">REC</span>
               </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Live Simulation Telemetry Gauges */}
-        <div className="sim-gauges-card font-mono">
-          <div className="gauge-row">
-            <span className="gauge-label">Window Time:</span>
-            <span className="gauge-val font-semibold">{simulation.timeInWindowSec.toFixed(1)} / 60.0s</span>
-          </div>
-          <div className="window-progress-bar">
-            <div
-              className="window-progress-fill"
-              style={{ width: `${(simulation.timeInWindowSec / 60) * 100}%` }}
-            />
-          </div>
-
-          <div className="gauge-metrics-grid">
-            <div className="metric-box">
-              <span className="metric-num text-brand">{simulation.totalRequests}</span>
-              <span className="metric-lbl">Total Req</span>
-            </div>
-            <div className="metric-box">
-              <span className="metric-num text-success">{simulation.allowedRequests}</span>
-              <span className="metric-lbl">Allowed (200)</span>
-            </div>
-            <div className="metric-box">
-              <span className={`metric-num ${simulation.throttledRequests > 0 ? 'text-danger' : 'text-muted'}`}>
-                {simulation.throttledRequests}
-              </span>
-              <span className="metric-lbl">Dropped (429)</span>
+              <button
+                type="button"
+                className={`sim-pill-btn ${simulation.algorithm === 'FIXED_WINDOW' ? 'active vulnerable' : ''}`}
+                onClick={() => onSetAlgorithm('FIXED_WINDOW')}
+              >
+                <span className="pill-dot text-warning">●</span>
+                <span>Fixed Window</span>
+                <span className="pill-badge-vuln font-mono">DEFECT</span>
+              </button>
             </div>
           </div>
 
-          {/* Downstream Compute Load Gauge */}
-          <div className="downstream-load-group">
-            <div className="load-label-row">
-              <span className="load-label">Compute Fleet Load:</span>
+          {/* Traffic Scenario */}
+          <div className="sim-control-group">
+            <label className="sim-label font-mono">Traffic Pattern</label>
+            <div className="scenario-select-grid">
+              <button
+                type="button"
+                className={`scenario-btn ${simulation.scenario === 'BOUNDARY_SPIKE' ? 'active' : ''}`}
+                onClick={() => onSetScenario('BOUNDARY_SPIKE')}
+              >
+                <strong className="scenario-name">Boundary Spike</strong>
+                <span className="scenario-desc font-mono">80 at 59s, 80 at 61s</span>
+              </button>
+              <button
+                type="button"
+                className={`scenario-btn ${simulation.scenario === 'BURST_ATTACK' ? 'active' : ''}`}
+                onClick={() => onSetScenario('BURST_ATTACK')}
+              >
+                <strong className="scenario-name">Burst Attack</strong>
+                <span className="scenario-desc font-mono">150 req concurrent</span>
+              </button>
+              <button
+                type="button"
+                className={`scenario-btn ${simulation.scenario === 'STEADY' ? 'active' : ''}`}
+                onClick={() => onSetScenario('STEADY')}
+              >
+                <strong className="scenario-name">Steady Load</strong>
+                <span className="scenario-desc font-mono">1.2 rps compliant</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Playback Controls & Speed */}
+          <div className="sim-control-group">
+            <div className="sim-playback-row">
+              <button
+                type="button"
+                className={`sim-primary-play-btn ${simulation.isRunning ? 'running' : ''}`}
+                onClick={onTogglePlay}
+                aria-label={simulation.isRunning ? 'Pause Simulation' : 'Run Simulation'}
+              >
+                {simulation.isRunning ? <Pause size={14} /> : <Play size={14} />}
+                <span>{simulation.isRunning ? 'Pause' : 'Start Simulation'}</span>
+              </button>
+
+              <button
+                type="button"
+                className="sim-reset-btn"
+                onClick={onResetSimulation}
+                title="Reset simulation time and metrics"
+                aria-label="Reset simulation"
+              >
+                <RotateCcw size={14} />
+              </button>
+
+              <div className="speed-pills font-mono" role="group" aria-label="Playback Speed">
+                {[1, 2, 5].map((spd) => (
+                  <button
+                    key={spd}
+                    type="button"
+                    className={`speed-pill speed-btn ${simulation.speed === spd ? 'active' : ''}`}
+                    onClick={() => onSetSpeed(spd)}
+                  >
+                    {spd}x
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Virtual Clock & Admitted / Throttled Counters */}
+          <div className="sim-telemetry-box font-mono">
+            <div className="telemetry-row">
+              <span className="tel-label">Virtual Window Clock:</span>
+              <span className="tel-val text-brand">{simulation.timeInWindowSec.toFixed(1)}s / 60.0s</span>
+            </div>
+            <div className="telemetry-row">
+              <span className="tel-label">Total Ingress Requests:</span>
+              <span className="tel-val">{simulation.totalRequests}</span>
+            </div>
+            <div className="telemetry-row">
+              <span className="tel-label">Admitted to Compute:</span>
+              <span className="tel-val text-success">{simulation.allowedRequests} (200 OK)</span>
+            </div>
+            <div className="telemetry-row">
+              <span className="tel-label">Throttled at Gateway:</span>
+              <span className="tel-val text-warning">{simulation.throttledRequests} (429)</span>
+            </div>
+
+            {/* Downstream Service Load Indicator */}
+            <div className="load-meter-header">
+              <span className="tel-label">Modeled Downstream Load:</span>
               <span
-                className={`load-val ${
+                className={`load-pct ${
                   simulation.downstreamLoadPct > 100
                     ? 'text-danger'
                     : simulation.downstreamLoadPct > 80
@@ -258,8 +264,23 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
 
           {/* Simulation Educational Explanation */}
           <p className="sim-live-explanation">{simulation.explanation}</p>
-        </div>
-      </section>
+        </section>
+      ) : (
+        <section className="studio-nav-section" aria-labelledby="sim-controller-heading">
+          <div className="section-label-row">
+            <Sliders size={13} className="text-secondary" />
+            <h3 id="sim-controller-heading" className="section-label">
+              Simulation Status
+            </h3>
+          </div>
+          <div className="sim-disclaimer-box" role="note" style={{ background: '#090d16', borderColor: 'rgba(255,255,255,0.08)' }}>
+            <Info size={12} className="disclaimer-icon text-muted" />
+            <span className="disclaimer-text text-muted" style={{ color: '#94a3b8' }}>
+              Discrete educational simulation is not modeled for this scenario. Architectural invariants are verified through executable contracts.
+            </span>
+          </div>
+        </section>
+      )}
 
       {/* 3. System Components Hierarchy */}
       <section className="studio-nav-section" aria-labelledby="components-heading">
@@ -284,9 +305,9 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
                   <span className="entity-icon-badge">{getNodeIcon(node.category)}</span>
                   <div className="entity-text-group">
                     <strong className="entity-label">{node.label}</strong>
-                    <span className="entity-sublabel">{node.tierBadge}</span>
+                    <span className="entity-sublabel">{node.tierBadge || node.tier?.toUpperCase()}</span>
                   </div>
-                  <span className={`status-dot dot-${node.status}`} title={`Status: ${node.status}`} />
+                  <span className={`status-dot dot-${node.status || 'healthy'}`} title={`Status: ${node.status || 'healthy'}`} />
                 </button>
               </li>
             );
@@ -316,10 +337,10 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
                 >
                   <span className="edge-bullet">→</span>
                   <div className="entity-text-group">
-                    <strong className="entity-label">{edge.label}</strong>
+                    <strong className="entity-label">{edge.label || edge.id}</strong>
                     <span className="entity-sublabel font-mono">{edge.protocol}</span>
                   </div>
-                  <span className="entity-sla font-mono">{edge.latencySla}</span>
+                  <span className="entity-sla font-mono">{edge.latencySla || (edge.direction === 'bidirectional' ? '↔' : '→')}</span>
                 </button>
               </li>
             );
@@ -328,29 +349,42 @@ export const StudioLeftNav: React.FC<StudioLeftNavProps> = ({
       </section>
 
       {/* 5. Invariants Checklist */}
-      <section className="studio-nav-section" aria-labelledby="invariants-heading">
-        <div className="section-label-row">
-          <ShieldCheck size={13} className="text-secondary" />
-          <h3 id="invariants-heading" className="section-label">
-            Planned Invariant Checks (3 planned)
-          </h3>
-        </div>
+      {activeContract?.invariants && activeContract.invariants.length > 0 && (
+        <section className="studio-nav-section" aria-labelledby="invariants-heading">
+          <div className="section-label-row">
+            <ShieldCheck size={13} className="text-secondary" />
+            <h3 id="invariants-heading" className="section-label">
+              Planned Invariant Checks ({activeContract.invariants.length} planned)
+            </h3>
+          </div>
 
-        <div className="invariants-mini-checklist">
-          <div className="invariant-check-row">
-            <span className="font-mono text-xs text-brand">○</span>
-            <span>Sliding window burst suppression (Planned check)</span>
+          <div className="invariants-mini-checklist">
+            {activeContract.id === 'contract-rate-limiter' ? (
+              <>
+                <div className="invariant-check-row">
+                  <span className="font-mono text-xs text-brand">○</span>
+                  <span>Sliding window burst suppression (Planned check)</span>
+                </div>
+                <div className="invariant-check-row">
+                  <span className="font-mono text-xs text-brand">○</span>
+                  <span>Ingress gateway isolation shield (Planned check)</span>
+                </div>
+                <div className="invariant-check-row">
+                  <span className="font-mono text-xs text-brand">○</span>
+                  <span>Zero SQL queries in hot-path (Planned check)</span>
+                </div>
+              </>
+            ) : (
+              activeContract.invariants.map((inv) => (
+                <div key={inv.id} className="invariant-check-row">
+                  <span className="font-mono text-xs text-brand">○</span>
+                  <span>{inv.property}</span>
+                </div>
+              ))
+            )}
           </div>
-          <div className="invariant-check-row">
-            <span className="font-mono text-xs text-brand">○</span>
-            <span>Ingress gateway isolation shield (Planned check)</span>
-          </div>
-          <div className="invariant-check-row">
-            <span className="font-mono text-xs text-brand">○</span>
-            <span>Zero SQL queries in hot-path (Planned check)</span>
-          </div>
-        </div>
-      </section>
+        </section>
+      )}
     </aside>
   );
 };

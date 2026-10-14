@@ -1,6 +1,29 @@
 // ArchitectAI Architecture Studio Prototype — Type Definitions
+import type {
+  ArchitectureGraphNode,
+  ArchitectureGraphEdge,
+  ArchitectureGraphBoundary,
+  ArchitectureGraphProjection,
+  GraphProjectionStatus,
+  GraphEntityOrigin,
+  GraphEntityConfidence,
+  GraphNodeCategory,
+  EngineeringContract,
+} from '@architectai/domain';
 
-export type ComponentCategory = 'client' | 'gateway' | 'compute' | 'cache' | 'datastore';
+export type {
+  ArchitectureGraphNode,
+  ArchitectureGraphEdge,
+  ArchitectureGraphBoundary,
+  ArchitectureGraphProjection,
+  GraphProjectionStatus,
+  GraphEntityOrigin,
+  GraphEntityConfidence,
+  GraphNodeCategory,
+  EngineeringContract,
+};
+
+export type ComponentCategory = GraphNodeCategory;
 
 export type NodeStatus = 'healthy' | 'active' | 'warning' | 'throttled' | 'overloaded';
 
@@ -27,7 +50,7 @@ export interface InvariantVerificationSpec {
   invariantId: string;
   title: string;
   formalProperty: string;
-  operator: 'lte' | 'gte' | 'eq' | 'no_duplicate' | 'bounded_concurrency';
+  operator: 'lte' | 'gte' | 'eq' | 'no_duplicate' | 'bounded_concurrency' | string;
   expected: string | number;
   testStrategy: string;
   verificationDescription: string;
@@ -42,67 +65,65 @@ export interface ImplementationMapping {
   codeSnippet?: string;
 }
 
-export interface StudioNode {
+/**
+ * StudioNode extends the authoritative domain ArchitectureGraphNode with
+ * optional simulation and presentation-level properties.
+ */
+export interface StudioNode extends Partial<ArchitectureGraphNode> {
   id: string;
   label: string;
   sublabel: string;
   category: ComponentCategory;
-  tierBadge: string;
-  x: number; // percentage (0 - 100)
-  y: number; // percentage (0 - 100)
-  status: NodeStatus;
-  
+  x: number;
+  y: number;
+
+  tierBadge?: string;
+  status?: NodeStatus;
+
   // Systems Reasoning & Provenance
   purpose: string;
-  whySelected: string;
-  tradeOffs: string[];
-  failureModes: ArchitectureFailureMode[];
-  alternativesConsidered: ArchitectureAlternative[];
-  implementation: ImplementationMapping;
-  verification: InvariantVerificationSpec;
-  
-  // Simulated Live Metrics
-  metrics: {
+  whySelected?: string;
+  tradeOffs?: string[];
+  failureModes?: ArchitectureFailureMode[];
+  alternativesConsidered?: ArchitectureAlternative[];
+  implementation?: ImplementationMapping;
+  verification?: InvariantVerificationSpec;
+
+  // Metrics strip (real modeled properties or prototype metrics)
+  metrics?: {
     label1: string;
     value1: string;
     label2: string;
     value2: string;
-    label3: string;
-    value3: string;
+    label3?: string;
+    value3?: string;
   };
 }
 
-export interface StudioEdge {
+/**
+ * StudioEdge extends the authoritative domain ArchitectureGraphEdge with
+ * presentation-level properties.
+ */
+export interface StudioEdge extends Partial<ArchitectureGraphEdge> {
   id: string;
   source: string;
   target: string;
   label: string;
   protocol: string;
-  latencySla: string;
-  direction: 'unidirectional' | 'bidirectional';
-  
+  direction?: 'unidirectional' | 'bidirectional';
+  latencySla?: string;
+
   // Systems Reasoning
-  purpose: string;
-  whySelected: string;
-  tradeOffs: string[];
-  failureModes: ArchitectureFailureMode[];
-  alternativesConsidered: ArchitectureAlternative[];
-  implementation: ImplementationMapping;
-  verification: InvariantVerificationSpec;
+  purpose?: string;
+  whySelected?: string;
+  tradeOffs?: string[];
+  failureModes?: ArchitectureFailureMode[];
+  alternativesConsidered?: ArchitectureAlternative[];
+  implementation?: ImplementationMapping;
+  verification?: InvariantVerificationSpec;
 }
 
-export interface TrustBoundary {
-  id: string;
-  label: string;
-  description: string;
-  tier: 'public' | 'dmz' | 'private_compute' | 'state';
-  rect: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
-}
+export type TrustBoundary = ArchitectureGraphBoundary;
 
 export interface SimulationState {
   algorithm: SimulationAlgorithm;

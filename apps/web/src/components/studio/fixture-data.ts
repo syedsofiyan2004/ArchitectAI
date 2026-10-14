@@ -20,6 +20,7 @@ export const TRUST_BOUNDARIES: TrustBoundary[] = [
     label: 'Untrusted Internet Perimeter',
     description: 'Public clients, mobile applications, and external partner APIs.',
     tier: 'public',
+    nodeIds: ['node-client'],
     rect: { x: 20, y: 30, width: 220, height: 580 },
   },
   {
@@ -27,6 +28,7 @@ export const TRUST_BOUNDARIES: TrustBoundary[] = [
     label: 'Ingress & Edge DMZ',
     description: 'TLS termination, edge rate limiting, and traffic policy enforcement.',
     tier: 'dmz',
+    nodeIds: ['node-gateway'],
     rect: { x: 270, y: 30, width: 230, height: 580 },
   },
   {
@@ -34,6 +36,7 @@ export const TRUST_BOUNDARIES: TrustBoundary[] = [
     label: 'Private VPC Compute Tier',
     description: 'Internal microservices and business logic execution behind gateway shields.',
     tier: 'private_compute',
+    nodeIds: ['node-compute'],
     rect: { x: 530, y: 30, width: 230, height: 580 },
   },
   {
@@ -41,6 +44,7 @@ export const TRUST_BOUNDARIES: TrustBoundary[] = [
     label: 'State & Storage Tier',
     description: 'Distributed cache coordination and persistent relational data storage.',
     tier: 'state',
+    nodeIds: ['node-redis', 'node-db'],
     rect: { x: 790, y: 30, width: 290, height: 580 },
   },
 ];

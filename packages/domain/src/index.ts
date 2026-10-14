@@ -14,3 +14,4 @@ export * from './repair.js';
 export * from './knowledge-acquisition.js';
 export * from './product.js';
 export * from './hardening.js';
+export * from './architecture-graph.js';

@@ -1,24 +1,66 @@
 // ArchitectAI — Architecture Studio Prototype Page
-import React, { useState, useEffect, useCallback } from 'react';
+// Grounded Architecture Graph Projection derived from authoritative EngineeringContracts
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { ArchitectureGraphProjector } from '@architectai/application/services/architecture-graph-projector';
 import { StudioHeader } from '../components/studio/StudioHeader';
 import { StudioLeftNav } from '../components/studio/StudioLeftNav';
 import { StudioCanvas } from '../components/studio/StudioCanvas';
 import { StudioInspector } from '../components/studio/StudioInspector';
 import {
-  STUDIO_NODES,
-  STUDIO_EDGES,
-  TRUST_BOUNDARIES,
-  STUDIO_REQUIREMENT,
-} from '../components/studio/fixture-data';
+  ALL_FIXTURE_CONTRACTS,
+  RATE_LIMITER_FIXTURE_CONTRACT,
+} from '../components/studio/fixture-contracts';
 import { useSimulation } from '../components/studio/useSimulation';
 import '../components/studio/ArchitectureStudio.css';
 
 export const ArchitectureStudioPage: React.FC = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlContract = searchParams.get('contract');
+  const [selectedContractId, setSelectedContractId] = useState<string>(
+    urlContract && ALL_FIXTURE_CONTRACTS[urlContract] ? urlContract : 'contract-rate-limiter'
+  );
+
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Update URL search param when selected contract changes
+  const handleSelectContract = useCallback(
+    (contractId: string) => {
+      setSelectedContractId(contractId);
+      setSearchParams({ contract: contractId });
+      setSelectedId(null);
+      setIsInspectorOpen(false);
+    },
+    [setSearchParams]
+  );
+
+  // Sync state if URL search param changes externally
+  useEffect(() => {
+    if (urlContract && ALL_FIXTURE_CONTRACTS[urlContract] && urlContract !== selectedContractId) {
+      setSelectedContractId(urlContract);
+      setSelectedId(null);
+    }
+  }, [urlContract, selectedContractId]);
+
+  // Authoritative Engineering Contract & Deterministic Graph Projection
+  const activeContract = useMemo(() => {
+    return ALL_FIXTURE_CONTRACTS[selectedContractId] || RATE_LIMITER_FIXTURE_CONTRACT;
+  }, [selectedContractId]);
+
+  const projector = useMemo(() => new ArchitectureGraphProjector(), []);
+
+  const projection = useMemo(() => {
+    return projector.project(activeContract);
+  }, [projector, activeContract]);
+
+  const nodes = projection.nodes;
+  const edges = projection.edges;
+  const boundaries = projection.boundaries;
+  const simulationAvailable = Boolean(projection.simulationModule?.available);
 
   const {
     state: simulation,
@@ -31,8 +73,8 @@ export const ArchitectureStudioPage: React.FC = () => {
   } = useSimulation();
 
   // Find currently selected node or edge
-  const selectedNode = STUDIO_NODES.find((n) => n.id === selectedId) || null;
-  const selectedEdge = STUDIO_EDGES.find((e) => e.id === selectedId) || null;
+  const selectedNode = nodes.find((n) => n.id === selectedId) || null;
+  const selectedEdge = edges.find((e) => e.id === selectedId) || null;
   const selectedEntity = selectedNode || selectedEdge;
 
   // Genuine Fit-to-Content calculation
@@ -52,21 +94,23 @@ export const ArchitectureStudioPage: React.FC = () => {
   }, []);
 
   // Focus-on-selected-component behavior (readable zoom and centered framing)
-  const focusOnNode = useCallback((nodeId: string) => {
-    const node = STUDIO_NODES.find((n) => n.id === nodeId);
-    if (!node) return;
-    const container = document.querySelector('.studio-canvas-container');
-    const w = container?.clientWidth || 1000;
-    const h = container?.clientHeight || 650;
-    const isMobile = w < 768;
-    const targetZoom = isMobile ? 1.0 : 1.1;
-    // On mobile, center node in upper viewing area leaving room for bottom-sheet
-    const targetY = isMobile ? h * 0.28 : h / 2;
-    const px = w / 2 - node.x * targetZoom;
-    const py = targetY - node.y * targetZoom;
-    setZoomLevel(targetZoom);
-    setPan({ x: Math.round(px), y: Math.round(py) });
-  }, []);
+  const focusOnNode = useCallback(
+    (nodeId: string) => {
+      const node = nodes.find((n) => n.id === nodeId);
+      if (!node) return;
+      const container = document.querySelector('.studio-canvas-container');
+      const w = container?.clientWidth || 1000;
+      const h = container?.clientHeight || 650;
+      const isMobile = w < 768;
+      const targetZoom = isMobile ? 1.0 : 1.1;
+      const targetY = isMobile ? h * 0.28 : h / 2;
+      const px = w / 2 - node.x * targetZoom;
+      const py = targetY - node.y * targetZoom;
+      setZoomLevel(targetZoom);
+      setPan({ x: Math.round(px), y: Math.round(py) });
+    },
+    [nodes]
+  );
 
   // Initial auto-fit and resize listener
   useEffect(() => {
@@ -77,7 +121,7 @@ export const ArchitectureStudioPage: React.FC = () => {
       clearTimeout(timer);
       window.removeEventListener('resize', handleFitToContent);
     };
-  }, [handleFitToContent]);
+  }, [handleFitToContent, selectedContractId]);
 
   // Re-fit canvas when inspector or mobile drawer toggles without selected entity
   useEffect(() => {
@@ -112,7 +156,7 @@ export const ArchitectureStudioPage: React.FC = () => {
   // Keyboard accessibility
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) {
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes((e.target as HTMLElement)?.tagName)) {
         return;
       }
 
@@ -131,8 +175,7 @@ export const ArchitectureStudioPage: React.FC = () => {
       } else if (e.key === '0') {
         e.preventDefault();
         handleClearSelection();
-      } else if (e.code === 'Space') {
-        // Toggle simulation with spacebar
+      } else if (e.code === 'Space' && simulationAvailable) {
         e.preventDefault();
         togglePlay();
       }
@@ -140,14 +183,14 @@ export const ArchitectureStudioPage: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, isMobileNavOpen, togglePlay, handleClearSelection]);
+  }, [selectedId, isMobileNavOpen, togglePlay, handleClearSelection, simulationAvailable]);
 
   return (
     <div className="architecture-studio-layout">
       {/* 1. Global Studio Header Bar */}
       <StudioHeader
-        projectName={STUDIO_REQUIREMENT.project}
-        requirementTitle={STUDIO_REQUIREMENT.title}
+        projectName={activeContract.id}
+        requirementTitle={activeContract.requirement.context?.title || activeContract.requirement.id}
         simulation={simulation}
         onTogglePlay={togglePlay}
         onResetSimulation={reset}
@@ -157,6 +200,9 @@ export const ArchitectureStudioPage: React.FC = () => {
         onZoomReset={handleFitToContent}
         isInspectorOpen={isInspectorOpen}
         onToggleInspector={() => setIsInspectorOpen((prev) => !prev)}
+        activeContractId={selectedContractId}
+        onSelectContract={handleSelectContract}
+        simulationAvailable={simulationAvailable}
       />
 
       {/* Mobile Quick Action Buttons Bar */}
@@ -170,7 +216,7 @@ export const ArchitectureStudioPage: React.FC = () => {
           }}
           aria-expanded={isMobileNavOpen}
         >
-          {isMobileNavOpen ? 'Close Menu' : 'Sim & Components'}
+          {isMobileNavOpen ? 'Close Menu' : 'Overview & Nodes'}
         </button>
 
         {selectedId ? (
@@ -185,7 +231,7 @@ export const ArchitectureStudioPage: React.FC = () => {
           </button>
         ) : (
           <span className="mobile-mode-indicator">
-            {simulation.algorithm === 'ROLLING_WINDOW' ? 'Sliding Window' : 'Fixed Window'}
+            {activeContract.requirement.context?.title || activeContract.requirement.id}
           </span>
         )}
 
@@ -207,8 +253,8 @@ export const ArchitectureStudioPage: React.FC = () => {
         {/* Left Navigation & Simulation Controls */}
         <div className={`studio-left-pane ${isMobileNavOpen ? 'mobile-open' : ''}`}>
           <StudioLeftNav
-            nodes={STUDIO_NODES}
-            edges={STUDIO_EDGES}
+            nodes={nodes}
+            edges={edges}
             selectedId={selectedId}
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}
@@ -218,15 +264,17 @@ export const ArchitectureStudioPage: React.FC = () => {
             onSetSpeed={setSpeed}
             onTogglePlay={togglePlay}
             onResetSimulation={reset}
+            activeContract={activeContract}
+            simulationAvailable={simulationAvailable}
           />
         </div>
 
         {/* Central Architecture Canvas */}
         <main className="studio-canvas-pane">
           <StudioCanvas
-            nodes={STUDIO_NODES}
-            edges={STUDIO_EDGES}
-            boundaries={TRUST_BOUNDARIES}
+            nodes={nodes}
+            edges={edges}
+            boundaries={boundaries}
             selectedId={selectedId}
             onSelectNode={handleSelectNode}
             onSelectEdge={handleSelectEdge}
@@ -238,6 +286,7 @@ export const ArchitectureStudioPage: React.FC = () => {
             onFitToOverview={handleFitToContent}
             packets={packets}
             simulation={simulation}
+            simulationAvailable={simulationAvailable}
           />
         </main>
 
@@ -247,6 +296,8 @@ export const ArchitectureStudioPage: React.FC = () => {
             selectedEntity={selectedEntity}
             isOpen={isInspectorOpen}
             onClose={() => setIsInspectorOpen(false)}
+            activeContract={activeContract}
+            projection={projection}
           />
         </div>
       </div>

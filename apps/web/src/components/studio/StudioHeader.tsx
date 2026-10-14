@@ -10,7 +10,7 @@ import {
   ZoomIn,
   ZoomOut,
   Maximize2,
-  ShieldAlert,
+  Sliders,
 } from 'lucide-react';
 import { SimulationState } from './types';
 
@@ -26,6 +26,9 @@ interface StudioHeaderProps {
   onZoomReset: () => void;
   isInspectorOpen: boolean;
   onToggleInspector: () => void;
+  activeContractId?: string;
+  onSelectContract?: (contractId: string) => void;
+  simulationAvailable?: boolean;
 }
 
 export const StudioHeader: React.FC<StudioHeaderProps> = ({
@@ -40,6 +43,9 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   onZoomReset,
   isInspectorOpen,
   onToggleInspector,
+  activeContractId = 'contract-rate-limiter',
+  onSelectContract,
+  simulationAvailable = false,
 }) => {
   return (
     <header className="studio-header">
@@ -75,72 +81,113 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="studio-header-center">
-        {/* Simulation Mini Bar */}
-        <div className="studio-sim-quickbar">
-          <div className="sim-mode-tag font-mono">
-            <span
-              className={`sim-indicator-dot ${
-                simulation.burstDetected ? 'dot-burst' : simulation.isRunning ? 'dot-running' : 'dot-paused'
-              }`}
-            />
-            <span>{simulation.algorithm === 'ROLLING_WINDOW' ? 'Sliding Window' : 'Fixed Window'}</span>
-          </div>
-
-          <div className="sim-quick-controls">
-            <button
-              type="button"
-              className="studio-btn-icon"
-              onClick={onTogglePlay}
-              title={simulation.isRunning ? 'Pause Simulation' : 'Resume Simulation'}
-              aria-label={simulation.isRunning ? 'Pause Simulation' : 'Resume Simulation'}
-            >
-              {simulation.isRunning ? <Pause size={13} /> : <Play size={13} />}
-            </button>
-            <button
-              type="button"
-              className="studio-btn-icon"
-              onClick={onResetSimulation}
-              title="Reset Simulation State"
-              aria-label="Reset Simulation State"
-            >
-              <RotateCcw size={13} />
-            </button>
-          </div>
-
-          <div className="sim-quick-stats font-mono">
-            <span className="stat-label">t=</span>
-            <span className="stat-val">{simulation.timeInWindowSec.toFixed(1)}s</span>
-            <span className="stat-sep">•</span>
-            <span className="stat-label">P99:</span>
-            <span className="stat-val text-success">~0.8ms (modeled)</span>
-          </div>
+        {/* Contract Selector Dropdown */}
+        <div className="studio-contract-selector-wrap font-mono" style={{ marginLeft: '16px' }}>
+          <select
+            id="contract-selector"
+            className="studio-contract-select"
+            value={activeContractId}
+            onChange={(e) => onSelectContract?.(e.target.value)}
+            aria-label="Select Architecture Contract"
+            style={{
+              background: '#090d16',
+              color: '#f8fafc',
+              border: '1px solid rgba(56, 189, 248, 0.4)',
+              borderRadius: '6px',
+              padding: '5px 10px',
+              fontSize: '11px',
+              fontWeight: 600,
+              cursor: 'pointer',
+              outline: 'none',
+            }}
+          >
+            <option value="contract-rate-limiter">Rate Limiter (Multi-Replica)</option>
+            <option value="contract-payment-idempotency">Payment Webhook & Outbox</option>
+            <option value="contract-image-pipeline">Image Upload & Workers</option>
+            <option value="contract-incomplete-sample">Incomplete Contract (Draft)</option>
+          </select>
         </div>
       </div>
 
+      <div className="studio-header-center">
+        {simulationAvailable ? (
+          /* Simulation Mini Bar */
+          <div className="studio-sim-quickbar">
+            <div className="sim-mode-tag font-mono">
+              <span
+                className={`sim-indicator-dot ${
+                  simulation.burstDetected ? 'dot-burst' : simulation.isRunning ? 'dot-running' : 'dot-paused'
+                }`}
+              />
+              <span>{simulation.algorithm === 'ROLLING_WINDOW' ? 'Sliding Window' : 'Fixed Window'}</span>
+            </div>
+
+            <div className="sim-quick-controls">
+              <button
+                type="button"
+                className="studio-btn-icon"
+                onClick={onTogglePlay}
+                title={simulation.isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+                aria-label={simulation.isRunning ? 'Pause Simulation' : 'Resume Simulation'}
+              >
+                {simulation.isRunning ? <Pause size={13} /> : <Play size={13} />}
+              </button>
+              <button
+                type="button"
+                className="studio-btn-icon"
+                onClick={onResetSimulation}
+                title="Reset Simulation State"
+                aria-label="Reset Simulation State"
+              >
+                <RotateCcw size={13} />
+              </button>
+            </div>
+
+            <div className="sim-quick-stats font-mono">
+              <span className="stat-label">t=</span>
+              <span className="stat-val">{simulation.timeInWindowSec.toFixed(1)}s</span>
+              <span className="stat-sep">•</span>
+              <span className="stat-label">P99:</span>
+              <span className="stat-val text-success">~0.8ms (modeled)</span>
+            </div>
+          </div>
+        ) : (
+          /* Static Architecture Contract Indicator */
+          <div className="studio-sim-quickbar">
+            <div className="sim-mode-tag font-mono">
+              <span className="sim-indicator-dot dot-paused" style={{ background: '#38bdf8' }} />
+              <span>Static Contract Projection</span>
+            </div>
+            <div className="sim-quick-stats font-mono">
+              <span className="stat-label">Source:</span>
+              <span className="stat-val text-brand">Authoritative EngineeringContract</span>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="studio-header-right">
-        {/* Canvas Zoom Controls */}
-        <div className="studio-zoom-group">
-          <button
-            type="button"
-            className="studio-btn-icon"
-            onClick={onZoomOut}
-            title="Zoom Out"
-            aria-label="Zoom Out"
-          >
-            <ZoomOut size={14} />
-          </button>
-          <span className="studio-zoom-readout font-mono">{Math.round(zoomLevel * 100)}%</span>
+        {/* Canvas Zoom & View Helpers */}
+        <div className="studio-view-tools font-mono">
           <button
             type="button"
             className="studio-btn-icon"
             onClick={onZoomIn}
-            title="Zoom In"
+            title="Zoom In (+)"
             aria-label="Zoom In"
           >
             <ZoomIn size={14} />
+          </button>
+          <span className="zoom-indicator-text">{Math.round(zoomLevel * 100)}%</span>
+          <button
+            type="button"
+            className="studio-btn-icon"
+            onClick={onZoomOut}
+            title="Zoom Out (-)"
+            aria-label="Zoom Out"
+          >
+            <ZoomOut size={14} />
           </button>
           <button
             type="button"
@@ -153,15 +200,18 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
           </button>
         </div>
 
+        <div className="studio-divider" />
+
+        {/* Inspector Toggle Button */}
         <button
           type="button"
-          className={`studio-inspector-toggle-btn font-mono ${isInspectorOpen ? 'active' : ''}`}
+          className={`studio-toggle-inspector-btn font-mono ${isInspectorOpen ? 'active' : ''}`}
           onClick={onToggleInspector}
+          title={isInspectorOpen ? 'Close Systems Inspector' : 'Open Systems Inspector'}
           aria-expanded={isInspectorOpen}
-          aria-label="Toggle Systems Inspector Drawer"
         >
-          <ShieldAlert size={14} />
-          <span>Inspector</span>
+          <Sliders size={13} />
+          <span>{isInspectorOpen ? 'Hide Inspector' : 'Show Inspector'}</span>
         </button>
       </div>
     </header>

@@ -1,5 +1,6 @@
-// ArchitectAI Architecture Studio Prototype — Central Interactive Canvas
-import React, { useRef, useState } from 'react';
+// ArchitectAI Architecture Studio Prototype — Generic Central Interactive Canvas
+// Fully provider-neutral and contract-grounded. No hardcoded edge routing or domain conditionals.
+import React, { useRef, useState, useMemo } from 'react';
 import {
   Server,
   Database,
@@ -8,9 +9,12 @@ import {
   Layers,
   Activity,
   Shield,
+  ShieldAlert,
   ZoomIn,
   ZoomOut,
   Maximize2,
+  Workflow,
+  Radio,
 } from 'lucide-react';
 import { StudioNode, StudioEdge, TrustBoundary, SimulationState } from './types';
 import { SimulatedPacket } from './useSimulation';
@@ -31,14 +35,132 @@ interface StudioCanvasProps {
   pan: { x: number; y: number };
   onPanChange: (pan: { x: number; y: number }) => void;
   onFitToOverview: () => void;
-  packets: SimulatedPacket[];
-  simulation: SimulationState;
+  packets?: SimulatedPacket[];
+  simulation?: SimulationState;
+  simulationAvailable?: boolean;
 }
 
 interface EdgeRouting {
   pathData: string;
   badgeX: number;
   badgeY: number;
+}
+
+/**
+ * Mathematically derives collision-free Bezier edge routing and badge positioning
+ * between any two arbitrary nodes in the topology, including self-loops.
+ * Never depends on hardcoded edge IDs.
+ */
+export function computeGenericEdgePath(
+  edge: StudioEdge,
+  sourceNode?: StudioNode,
+  targetNode?: StudioNode
+): EdgeRouting {
+  if (!sourceNode || !targetNode) {
+    return {
+      pathData: 'M 0 0 L 0 0',
+      badgeX: -9999,
+      badgeY: -9999,
+    };
+  }
+
+  const isSelfLoop = Boolean(edge.isSelfLoop || edge.source === edge.target);
+  const sx = sourceNode.x ?? 100;
+  const sy = sourceNode.y ?? 100;
+
+  // 1. Self-Loop Routing: Upward arc returning to the same component
+  if (isSelfLoop) {
+    const startX = sx - 35;
+    const startY = sy - 42;
+    const endX = sx + 35;
+    const endY = sy - 42;
+    const cp1x = sx - 65;
+    const cp1y = sy - 95;
+    const cp2x = sx + 65;
+    const cp2y = sy - 95;
+    return {
+      pathData: `M ${startX} ${startY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY}`,
+      badgeX: sx,
+      badgeY: sy - 95,
+    };
+  }
+
+  const tx = targetNode.x ?? 300;
+  const ty = targetNode.y ?? 300;
+  const dx = tx - sx;
+  const dy = ty - sy;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist < 1) {
+    return {
+      pathData: `M ${sx} ${sy} L ${tx} ${ty}`,
+      badgeX: sx,
+      badgeY: sy - 15,
+    };
+  }
+
+  // Node card boundary clipping (width: 200px -> hw: 100px; height: ~84px -> hh: 42px)
+  const hw = 100;
+  const hh = 42;
+
+  // Intersect ray with source rectangle boundary
+  let startX = sx;
+  let startY = sy;
+  if (Math.abs(dx) * hh > Math.abs(dy) * hw) {
+    // Intersects left or right edge
+    const sign = dx > 0 ? 1 : -1;
+    startX = sx + sign * hw;
+    startY = sy + (dy / Math.abs(dx)) * hw;
+  } else {
+    // Intersects top or bottom edge
+    const sign = dy > 0 ? 1 : -1;
+    startY = sy + sign * hh;
+    startX = sx + (dx / Math.abs(dy)) * hh;
+  }
+
+  // Intersect ray with target rectangle boundary (stepping inward towards target)
+  let endX = tx;
+  let endY = ty;
+  if (Math.abs(dx) * hh > Math.abs(dy) * hw) {
+    const sign = dx > 0 ? -1 : 1;
+    endX = tx + sign * hw;
+    endY = ty - (dy / Math.abs(dx)) * hw;
+  } else {
+    const sign = dy > 0 ? -1 : 1;
+    endY = ty + sign * hh;
+    endX = tx - (dx / Math.abs(dy)) * hh;
+  }
+
+  // Compute smooth cubic Bezier curve
+  let cp1x: number;
+  let cp1y: number;
+  let cp2x: number;
+  let cp2y: number;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    // Horizontal dominant: curve horizontally
+    const midX = (startX + endX) / 2;
+    cp1x = midX;
+    cp1y = startY;
+    cp2x = midX;
+    cp2y = endY;
+  } else {
+    // Vertical dominant: curve vertically
+    const midY = (startY + endY) / 2;
+    cp1x = startX;
+    cp1y = midY;
+    cp2x = endX;
+    cp2y = midY;
+  }
+
+  const badgeX = (startX + endX) / 2;
+  const badgeY = (startY + endY) / 2 - 12;
+
+  return {
+    pathData: `M ${startX} ${startY} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${endX} ${endY}`,
+    badgeX,
+    badgeY,
+  };
 }
 
 export const StudioCanvas: React.FC<StudioCanvasProps> = ({
@@ -54,8 +176,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   pan,
   onPanChange,
   onFitToOverview,
-  packets,
+  packets = [],
   simulation,
+  simulationAvailable = false,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPanning, setIsPanning] = useState(false);
@@ -68,6 +191,15 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   const activePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchStartDist = useRef<number | null>(null);
   const pinchStartZoom = useRef<number>(1.0);
+
+  // Fast node lookup map
+  const nodeMap = useMemo(() => {
+    const map = new Map<string, StudioNode>();
+    for (const n of nodes) {
+      map.set(n.id, n);
+    }
+    return map;
+  }, [nodes]);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -89,7 +221,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
       setIsPanning(true);
     } else if (activePointers.current.size === 2) {
-      // Multi-pointer touch pinch scaling
       isPanningRef.current = false;
       setIsPanning(false);
       const points = Array.from(activePointers.current.values());
@@ -148,7 +279,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }
   };
 
-  // Direct touch fallback support for mobile browsers and touch emulators
   const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
     if (
       (e.target as HTMLElement).closest('.canvas-node') ||
@@ -159,24 +289,24 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       return;
     }
     if (e.touches.length === 1) {
-      const touch = e.touches[0];
+      const t = e.touches[0];
       isPanningRef.current = true;
       hasDragged.current = false;
-      dragOrigin.current = { x: touch.clientX, y: touch.clientY };
-      dragStartRef.current = { x: touch.clientX - pan.x, y: touch.clientY - pan.y };
+      dragOrigin.current = { x: t.clientX, y: t.clientY };
+      dragStartRef.current = { x: t.clientX - pan.x, y: t.clientY - pan.y };
       setIsPanning(true);
     }
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!isPanningRef.current || e.touches.length !== 1) return;
-    const touch = e.touches[0];
-    if (Math.hypot(touch.clientX - dragOrigin.current.x, touch.clientY - dragOrigin.current.y) > 3) {
+    const t = e.touches[0];
+    if (Math.hypot(t.clientX - dragOrigin.current.x, t.clientY - dragOrigin.current.y) > 3) {
       hasDragged.current = true;
     }
     onPanChange({
-      x: touch.clientX - dragStartRef.current.x,
-      y: touch.clientY - dragStartRef.current.y,
+      x: t.clientX - dragStartRef.current.x,
+      y: t.clientY - dragStartRef.current.y,
     });
   };
 
@@ -188,7 +318,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     }, 100);
   };
 
-  // Mouse fallback for environments where pointer events are not synthesized
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
     if (
       (e.target as HTMLElement).closest('.canvas-node') ||
@@ -198,11 +327,13 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
     ) {
       return;
     }
-    isPanningRef.current = true;
-    hasDragged.current = false;
-    dragOrigin.current = { x: e.clientX, y: e.clientY };
-    dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
-    setIsPanning(true);
+    if (e.button === 0) {
+      isPanningRef.current = true;
+      hasDragged.current = false;
+      dragOrigin.current = { x: e.clientX, y: e.clientY };
+      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      setIsPanning(true);
+    }
   };
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -231,49 +362,18 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       case 'gateway':
         return <Layers size={18} />;
       case 'compute':
+      case 'service':
         return <Cpu size={18} />;
       case 'cache':
         return <Activity size={18} />;
       case 'datastore':
         return <Database size={18} />;
+      case 'queue':
+        return <Workflow size={18} />;
+      case 'worker':
+        return <Radio size={18} />;
       default:
         return <Server size={18} />;
-    }
-  };
-
-  // Pre-calculated collision-free edge routing
-  const getEdgeRouting = (edgeId: string): EdgeRouting => {
-    switch (edgeId) {
-      case 'edge-client-gw':
-        return {
-          pathData: 'M 230 320 L 285 320',
-          badgeX: 257.5,
-          badgeY: 260,
-        };
-      case 'edge-gw-compute':
-        return {
-          pathData: 'M 485 305 C 510 305, 520 235, 545 235',
-          badgeX: 515,
-          badgeY: 270,
-        };
-      case 'edge-gw-redis':
-        return {
-          pathData: 'M 485 290 C 560 290, 680 120, 835 185',
-          badgeX: 650,
-          badgeY: 120,
-        };
-      case 'edge-compute-db':
-        return {
-          pathData: 'M 745 245 C 790 245, 790 450, 835 450',
-          badgeX: 790,
-          badgeY: 345,
-        };
-      default:
-        return {
-          pathData: 'M 0 0 L 100 100',
-          badgeX: 50,
-          badgeY: 50,
-        };
     }
   };
 
@@ -368,10 +468,12 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
             </marker>
           </defs>
 
-          {/* Connection Lines */}
+          {/* Generic Edge Connections */}
           {edges.map((edge) => {
             const isSelected = selectedId === edge.id;
-            const routing = getEdgeRouting(edge.id);
+            const sourceNode = nodeMap.get(edge.source);
+            const targetNode = nodeMap.get(edge.target);
+            const routing = computeGenericEdgePath(edge, sourceNode, targetNode);
 
             return (
               <g key={edge.id} className="canvas-edge-group">
@@ -393,14 +495,14 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                 />
 
                 {/* Animated edge flow pulse when simulation is running */}
-                {simulation.isRunning && (
+                {simulationAvailable && simulation?.isRunning && (
                   <path
                     d={routing.pathData}
                     className={`canvas-edge-pulse ${simulation.burstDetected ? 'pulse-burst' : ''}`}
                   />
                 )}
 
-                {/* Protocol Badge (Clean, un-occluded position) */}
+                {/* Protocol Badge (Clean, generic midpoint position) */}
                 <g
                   transform={`translate(${routing.badgeX}, ${routing.badgeY})`}
                   className="canvas-edge-badge-group"
@@ -419,15 +521,16 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                     className={`edge-badge-bg ${isSelected ? 'selected' : ''}`}
                   />
                   <text x="0" y="3" textAnchor="middle" className="edge-badge-text font-mono">
-                    {edge.protocol}
+                    {edge.protocol || edge.label || 'LINK'}
                   </text>
                 </g>
               </g>
             );
           })}
 
-          {/* 3. Simulated Request Packets */}
-          {simulation.isRunning &&
+          {/* 3. Simulated Request Packets (Only when simulation is active and supported) */}
+          {simulationAvailable &&
+            simulation?.isRunning &&
             packets.map((pkt) => {
               const currentX = pkt.sourceX + (pkt.targetX - pkt.sourceX) * pkt.progress;
               const currentY = pkt.sourceY + (pkt.targetY - pkt.sourceY) * pkt.progress;
@@ -446,13 +549,32 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
             })}
         </svg>
 
-        {/* 4. Interactive Node Cards Layer (200px width, zero overlap) */}
+        {/* 4. Interactive Node Cards Layer */}
         <div className="canvas-nodes-layer">
           {nodes.map((node) => {
             const isSelected = selectedId === node.id;
-            const isOverloaded =
-              simulation.downstreamLoadPct > 100 &&
-              (node.id === 'node-compute' || node.id === 'node-gateway');
+            const isOverloaded = Boolean(
+              simulationAvailable &&
+                simulation?.isRunning &&
+                simulation.downstreamLoadPct > 100 &&
+                (node.category === 'compute' || node.category === 'gateway')
+            );
+
+            // Truthful metrics strip derived from grounded contract properties
+            const metric1Key = node.metrics?.label1 || (node.modeledCapacity ? 'Capacity' : 'Origin');
+            const metric1Val =
+              node.metrics?.value1 ||
+              node.modeledCapacity ||
+              (node.origin ? node.origin.replace('_', ' ') : 'Decision');
+
+            const metric2Key = node.metrics?.label2 || (node.assumedLatencySla ? 'SLA / Tech' : 'Role');
+            const metric2Val =
+              node.metrics?.value2 ||
+              node.assumedLatencySla ||
+              node.technology ||
+              node.category;
+
+            const tierLabel = node.tierBadge || (node.tier ? node.tier.toUpperCase() : 'DMZ');
 
             return (
               <div
@@ -460,7 +582,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                 tabIndex={0}
                 role="button"
                 aria-pressed={isSelected}
-                aria-label={`${node.label}: ${node.sublabel}. Click to inspect systems details.`}
+                aria-label={`${node.label}: ${node.sublabel || node.purpose}. Click to inspect systems details.`}
                 className={`canvas-node node-${node.category} ${isSelected ? 'selected' : ''} ${
                   isOverloaded ? 'overloaded' : ''
                 }`}
@@ -483,36 +605,36 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                 <div className="node-card-top">
                   <div className="node-icon-frame">{getNodeIcon(node.category)}</div>
                   <div className="node-title-group">
-                    <span className="node-tier-pill font-mono">{node.tierBadge}</span>
+                    <span className="node-tier-pill font-mono">{tierLabel}</span>
                     <strong className="node-title">{node.label}</strong>
                   </div>
                   <span
-                    className={`node-status-indicator status-${isOverloaded ? 'overloaded' : node.status}`}
-                    title={isOverloaded ? 'Overloaded' : node.status}
+                    className={`node-status-indicator status-${isOverloaded ? 'overloaded' : node.status || 'healthy'}`}
+                    title={isOverloaded ? 'Overloaded' : node.status || 'Grounded'}
                   />
                 </div>
 
-                <p className="node-subtitle">{node.sublabel}</p>
+                <p className="node-subtitle">{node.sublabel || node.purpose}</p>
 
-                {/* Key Metrics Strip */}
+                {/* Key Metrics Strip (truthful properties) */}
                 <div className="node-metrics-strip">
                   <div className="node-metric-cell">
-                    <span className="metric-k">{node.metrics.label1}</span>
-                    <span className="metric-v font-mono">{node.metrics.value1}</span>
+                    <span className="metric-k">{metric1Key}</span>
+                    <span className="metric-v font-mono">{metric1Val}</span>
                   </div>
                   <div className="node-metric-cell">
-                    <span className="metric-k">{node.metrics.label2}</span>
+                    <span className="metric-k">{metric2Key}</span>
                     <span
                       className={`metric-v font-mono ${
-                        isOverloaded && node.metrics.label2.includes('Latency') ? 'text-danger' : ''
+                        isOverloaded && metric2Key.includes('Latency') ? 'text-danger' : ''
                       }`}
                     >
-                      {node.metrics.value2}
+                      {metric2Val}
                     </span>
                   </div>
                 </div>
 
-                {/* Overloaded Alert Pill if boundary burst leaks */}
+                {/* Overloaded Alert Pill if downstream compute capacity is exceeded */}
                 {isOverloaded && (
                   <div className="node-overload-banner font-mono">
                     ⚠️ Concurrency Overload
@@ -521,6 +643,34 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
               </div>
             );
           })}
+
+          {/* Graceful Fallback for Empty / Incomplete Contracts */}
+          {nodes.length === 0 && (
+            <div
+              className="canvas-empty-state font-mono"
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                textAlign: 'center',
+                background: '#0f172a',
+                border: '1px solid rgba(245, 158, 11, 0.4)',
+                borderRadius: '8px',
+                padding: '24px 32px',
+                maxWidth: '460px',
+                pointerEvents: 'auto',
+              }}
+            >
+              <ShieldAlert size={32} style={{ color: '#f59e0b', margin: '0 auto 12px' }} />
+              <h4 style={{ color: '#f8fafc', margin: '0 0 8px 0', fontSize: '15px' }}>
+                Incomplete Architecture Topology
+              </h4>
+              <p style={{ color: '#94a3b8', margin: 0, fontSize: '13px', lineHeight: '1.5' }}>
+                The selected contract is in draft or lacks architectural decisions. Topology cannot be grounded without decisions.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 
@@ -552,7 +702,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           aria-label="Fit to Overview"
         >
           <Maximize2 size={13} />
-          <span>Fit Overview</span>
+          <span>Fit to Overview</span>
         </button>
       </div>
 
@@ -564,16 +714,25 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
         </div>
         <div className="legend-item">
           <span className="legend-swatch swatch-flow" />
-          <span>Synchronous RPC / RESP3</span>
+          <span>Validated Topology Edge</span>
         </div>
-        <div className="legend-item">
-          <span className="legend-dot dot-allowed" />
-          <span>Permitted Flow (200)</span>
-        </div>
-        <div className="legend-item">
-          <span className="legend-dot dot-throttled" />
-          <span>429 Rate Limited</span>
-        </div>
+        {simulationAvailable ? (
+          <>
+            <div className="legend-item">
+              <span className="legend-dot dot-allowed" />
+              <span>Admitted Traffic (200)</span>
+            </div>
+            <div className="legend-item">
+              <span className="legend-dot dot-throttled" />
+              <span>Throttled Traffic (429)</span>
+            </div>
+          </>
+        ) : (
+          <div className="legend-item">
+            <span className="legend-dot" style={{ background: '#38bdf8' }} />
+            <span>Static Contract Graph</span>
+          </div>
+        )}
       </div>
     </div>
   );

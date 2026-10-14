@@ -39,6 +39,7 @@ import {
   CrashRecoveryService,
   KnowledgeBootstrapService,
   SystemCapabilityService,
+  ArchitectureGraphProjector,
   redactSensitiveData,
 } from '@architectai/application';
 import {
@@ -554,6 +555,35 @@ export async function createServer(options: ServerOptions = {}) {
         answers,
         sessions,
         artifacts,
+      });
+    } catch (err: unknown) {
+      return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // Read-only architecture graph projection endpoint derived from EngineeringContract
+  app.get('/api/runs/:runId/architecture-graph', (req: Request, res: Response) => {
+    try {
+      const run = runStore.findById(req.params.runId);
+      if (!run) {
+        return res.status(404).json({ success: false, error: 'Architecture run not found.' });
+      }
+      if (!run.contract) {
+        return res.status(404).json({ success: false, error: 'Run does not have an engineering contract.' });
+      }
+
+      const projector = new ArchitectureGraphProjector();
+      const revisions = runStore.getContractRevisions(run.id);
+      const currentRevision = revisions.length > 0 ? revisions.length : 1;
+      const projection = projector.project(run.contract, { revision: currentRevision });
+
+      return res.json({
+        success: true,
+        runId: run.id,
+        contractId: run.contract.id,
+        contractRevision: currentRevision,
+        status: projection.status,
+        projection,
       });
     } catch (err: unknown) {
       return res.status(500).json({ success: false, error: err instanceof Error ? err.message : String(err) });
