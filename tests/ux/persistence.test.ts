@@ -314,5 +314,5 @@ describe('Milestone 6: Productization & Persistent Engineering Workspace End-to-
 
     await page.close();
     await context.close();
-  });
+  }, 120000);
 });

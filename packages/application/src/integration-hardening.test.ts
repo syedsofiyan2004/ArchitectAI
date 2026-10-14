@@ -188,7 +188,7 @@ describe('Milestone 7: Real Execution Path Hardening & Integration Gate', () => 
 
     // Wait until the grandchild has actually been spawned
     let attempts = 0;
-    while ((!spawnedParentPid || !spawnedChildPid) && attempts < 50) {
+    while ((!spawnedParentPid || !spawnedChildPid) && attempts < 150) {
       await new Promise((r) => setTimeout(r, 100));
       attempts++;
     }

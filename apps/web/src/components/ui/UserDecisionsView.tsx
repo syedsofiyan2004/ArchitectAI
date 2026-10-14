@@ -88,6 +88,8 @@ export const UserDecisionsView: React.FC<UserDecisionsViewProps> = ({
     return null;
   }
 
+  const isSavingAny = Object.values(savingQuestions).some(Boolean);
+
   const handleSelectOption = async (question: string, optionLabel: string) => {
     setSavingQuestions((prev) => ({ ...prev, [question]: true }));
     setError(null);
@@ -107,6 +109,7 @@ export const UserDecisionsView: React.FC<UserDecisionsViewProps> = ({
   };
 
   const handleRefreshArchitecture = async () => {
+    if (isSavingAny || isRefreshing) return;
     setIsRefreshing(true);
     setError(null);
     setRefreshSuccess(false);
@@ -207,8 +210,14 @@ export const UserDecisionsView: React.FC<UserDecisionsViewProps> = ({
                 })}
               </div>
 
-              {currentAnswer && (
-                <div className="saved-answer-indicator font-mono" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              {isSaving && (
+                <div className="saving-answer-indicator font-mono" style={{ fontSize: '11px', color: 'var(--text-muted, #8b949e)', marginTop: '8px' }}>
+                  Saving decision...
+                </div>
+              )}
+
+              {currentAnswer && !isSaving && (
+                <div className="saved-answer-indicator font-mono" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px' }}>
                   <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                     <Check size={12} className="text-success" />
                     <span>Selected: {currentAnswer}</span>
@@ -238,7 +247,7 @@ export const UserDecisionsView: React.FC<UserDecisionsViewProps> = ({
           variant="primary"
           onClick={handleRefreshArchitecture}
           isLoading={isRefreshing}
-          disabled={isRefreshing}
+          disabled={isRefreshing || isSavingAny}
           icon={<RefreshCw size={14} className={isRefreshing ? 'spin' : ''} />}
         >
           {isRefreshing ? 'Refreshing Architecture...' : 'Apply Decisions & Refresh Architecture'}

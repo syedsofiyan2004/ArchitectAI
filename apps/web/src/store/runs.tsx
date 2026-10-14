@@ -20,7 +20,7 @@ interface RunsContextType {
   }) => Promise<string>;
   updateRun: (id: string, updates: Partial<AnalysisRunRecord>) => void;
   deleteRun: (id: string) => void;
-  recordQuestionAnswer: (runId: string, question: string, answer: string) => void;
+  recordQuestionAnswer: (runId: string, question: string, answer: string) => Promise<void>;
   createProject: (name: string, description?: string) => Promise<Project>;
   selectProject: (projectId: string) => Promise<void>;
   registerRepository: (projectIdOrPath: string, repoPath?: string) => Promise<ProjectRepository>;
@@ -245,18 +245,19 @@ export const RunsProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [updateRun]);
 
   const cancelRun = useCallback(async (runId: string): Promise<void> => {
-    try {
-      await fetch(`/api/runs/${runId}/cancel`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
-        },
-      });
-      updateRun(runId, { state: 'CANCELLED', status: 'failed' });
-    } catch (err) {
-      console.warn('Failed to cancel run:', err);
+    const res = await fetch(`/api/runs/${runId}/cancel`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+      },
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.success) {
+      const errorMsg = data.error || `Failed to cancel run (HTTP ${res.status}).`;
+      throw new Error(errorMsg);
     }
+    updateRun(runId, { state: 'CANCELLED', status: 'failed' });
   }, [csrfToken, updateRun]);
 
   const refreshRepository = useCallback(async (): Promise<void> => {
@@ -282,26 +283,33 @@ export const RunsProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRuns((prev) => prev.filter((r) => r.id !== id));
   }, []);
 
-  const recordQuestionAnswer = useCallback((runId: string, question: string, answer: string) => {
-    // 1. Optimistic update in state
-    setRuns((prev) =>
-      prev.map((r) => {
-        if (r.id !== runId) return r;
-        const userAnswers = { ...(r.userAnswers || {}), [question]: answer };
-        return { ...r, userAnswers };
-      })
-    );
+  const recordQuestionAnswer = useCallback(
+    async (runId: string, question: string, answer: string): Promise<void> => {
+      const res = await fetch(`/api/runs/${runId}/answers`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
+        },
+        body: JSON.stringify({ question, answer }),
+      });
 
-    // 2. Persist to server SQLite database
-    fetch(`/api/runs/${runId}/answers`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(csrfToken ? { 'x-csrf-token': csrfToken } : {}),
-      },
-      body: JSON.stringify({ question, answer }),
-    }).catch((err) => console.warn('Failed to persist answer to server', err));
-  }, [csrfToken]);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Failed to record answer.');
+      }
+
+      // Update state strictly after persistence succeeds
+      setRuns((prev) =>
+        prev.map((r) => {
+          if (r.id !== runId) return r;
+          const userAnswers = { ...(r.userAnswers || {}), [question]: answer };
+          return { ...r, userAnswers };
+        })
+      );
+    },
+    [csrfToken]
+  );
 
   const createRun = useCallback(
     async (input: {

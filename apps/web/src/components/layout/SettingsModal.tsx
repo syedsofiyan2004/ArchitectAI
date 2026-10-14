@@ -124,7 +124,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         },
       });
       const data = await res.json();
-      if (data.healthy || data.success) {
+      if (res.ok && data.healthy === true) {
         setTestResult({
           healthy: true,
           message: data.diagnostic || 'Provider connection verified successfully.',

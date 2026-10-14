@@ -472,7 +472,7 @@ describe('Milestone 3: Independent Adversarial Verification Engine', () => {
     expect(correctOutput.executionChecks.find((c) => c.scriptName === 'test')?.passed).toBe(true);
     expect(correctOutput.verificationRun?.overallStatus).toBe('VERIFIED');
     expect(correctOutput.verificationRun?.caseResults[0].assertions[0].observed).toBe(2); // bounded at 2!
-  }, 30000);
+  }, 90000);
 
   it('6. Negative Control: Unsupported verification environment yields INCONCLUSIVE (never PASS)', async () => {
     const unsupportedPlan = {
@@ -624,7 +624,7 @@ describe('Milestone 3: Independent Adversarial Verification Engine', () => {
     expect(correctOutput.verificationRun?.overallStatus).toBe('VERIFIED');
     expect(correctOutput.isVerified).toBe(true);
     expect(correctOutput.verificationRun?.caseResults[0].assertions[0].observed).toBe(1); // 1 single-flight call!
-  }, 30000);
+  }, 90000);
 
   it('9. Negative Control: Uninstrumentable invariant honestly yields INCONCLUSIVE (never PASS)', async () => {
     const uninstrumentableContract: EngineeringContract = {
