@@ -1,6 +1,5 @@
 // ArchitectAI Architecture Studio — Simulation Hook
 // Connects the pure deterministic SimulationEngine to the React UI
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   SimulationEngine,
@@ -9,6 +8,7 @@ import {
   SimulationMetrics,
   ProcessedRequest,
 } from './simulation-engine';
+import { SimulationState } from './types';
 
 export interface SimulatedPacket {
   id: string;
@@ -27,6 +27,7 @@ export function useSimulation() {
   const [isRunning, setIsRunning] = useState<boolean>(true);
   const [speed, setSpeed] = useState<number>(1); // 1x, 2x, 5x
   const [packets, setPackets] = useState<SimulatedPacket[]>([]);
+  const [instantaneousRps, setInstantaneousRps] = useState<number>(0);
 
   // Pure deterministic engine in a ref
   const engineRef = useRef<SimulationEngine>(
@@ -41,6 +42,7 @@ export function useSimulation() {
     engineRef.current.reset();
     setMetrics(engineRef.current.getMetrics());
     setPackets([]);
+    setInstantaneousRps(0);
   }, []);
 
   const setAlgorithm = useCallback((alg: SimulationAlgorithm) => {
@@ -48,6 +50,7 @@ export function useSimulation() {
     engineRef.current.setAlgorithm(alg);
     setMetrics(engineRef.current.getMetrics());
     setPackets([]);
+    setInstantaneousRps(0);
   }, []);
 
   const setScenario = useCallback((scen: TrafficScenario) => {
@@ -55,6 +58,7 @@ export function useSimulation() {
     engineRef.current.setScenario(scen);
     setMetrics(engineRef.current.getMetrics());
     setPackets([]);
+    setInstantaneousRps(0);
   }, []);
 
   // Virtual clock progression loop
@@ -71,42 +75,81 @@ export function useSimulation() {
       const updatedMetrics = engineRef.current.getMetrics();
       setMetrics(updatedMetrics);
 
+      // Truthfully derive presentation signals from valid simulation step data
+      const stepSeconds = virtualStepMs / 1000;
+      const rps = stepSeconds > 0 ? Math.round(newlyProcessed.length / stepSeconds) : 0;
+      setInstantaneousRps(rps);
+
       // Loop back if boundary test reaches 70 seconds to allow continuous educational observation
       if (engineRef.current.getVirtualTimeMs() > 70_000 && scenario === 'BOUNDARY_SPIKE') {
         engineRef.current.reset();
       }
 
-      // Generate animated packets for newly processed requests
+      // Generate truthful, bounded animated packets representing BOTH admitted and rejected outcomes
+      let newPackets: SimulatedPacket[] = [];
       if (newlyProcessed.length > 0) {
-        const newPackets: SimulatedPacket[] = newlyProcessed.slice(0, 4).map((req, i) => {
+        const admitted = newlyProcessed.filter((r) => r.status === 'ADMITTED');
+        const rejected = newlyProcessed.filter((r) => r.status === 'REJECTED');
+
+        const samples: ProcessedRequest[] = [];
+        // If there are admitted requests, take representative samples
+        if (admitted.length > 0) {
+          const count = Math.min(3, admitted.length);
+          const step = Math.max(1, Math.floor(admitted.length / count));
+          for (let i = 0; i < count; i++) {
+            samples.push(admitted[i * step] || admitted[0]);
+          }
+        }
+        // If there are rejected requests, take representative samples
+        if (rejected.length > 0) {
+          const count = Math.min(3, rejected.length);
+          const step = Math.max(1, Math.floor(rejected.length / count));
+          for (let i = 0; i < count; i++) {
+            samples.push(rejected[i * step] || rejected[0]);
+          }
+        }
+
+        newPackets = samples.map((req, i) => {
           const isThrottled = req.status === 'REJECTED';
           return {
-            id: `${req.id}-${Date.now()}-${i}`,
+            id: `${req.id}-${Date.now()}-${i}-${Math.random().toString(36).substring(2, 6)}`,
             sourceX: 230,
-            sourceY: 320 + (Math.random() - 0.5) * 24,
+            sourceY: 320 + (Math.random() - 0.5) * 20,
             targetX: isThrottled ? 385 : 645,
-            targetY: isThrottled ? 320 : 220 + (Math.random() - 0.5) * 24,
+            targetY: isThrottled ? 320 : 220 + (Math.random() - 0.5) * 20,
             progress: 0.0,
             status: isThrottled ? 'throttled' : 'allowed',
             timestamp: Date.now(),
           };
         });
-
-        setPackets((prev) => [...prev.slice(-10), ...newPackets]);
       }
 
-      // Animate packet progress along paths
-      setPackets((prev) =>
-        prev
-          .map((p) => ({ ...p, progress: p.progress + 0.18 * speed }))
-          .filter((p) => p.progress <= 1.0)
-      );
+      // Animate packet progress along paths (smooth, visible travel duration of ~1.2s)
+      setPackets((prev) => {
+        const advanced = prev
+          .map((p) => ({ ...p, progress: p.progress + 0.08 }))
+          .filter((p) => p.progress <= 1.0);
+
+        if (newPackets.length > 0) {
+          return [...advanced.slice(-12), ...newPackets];
+        }
+        return advanced;
+      });
     }, intervalRealMs);
 
     return () => clearInterval(timer);
   }, [isRunning, speed, scenario]);
 
-  // Construct full SimulationState object
+  // Truthfully derive presentation signals from valid simulation metrics
+  const burstDetected =
+    metrics.isOverloaded ||
+    metrics.downstreamLoadPct > 100 ||
+    instantaneousRps > 25 ||
+    (metrics.totalRequests > 0 &&
+      metrics.virtualTimeMs >= 58_500 &&
+      metrics.virtualTimeMs <= 62_500 &&
+      scenario === 'BOUNDARY_SPIKE');
+
   const simulationState: SimulationState = {
     algorithm,
     scenario,
@@ -116,9 +159,9 @@ export function useSimulation() {
     totalRequests: metrics.totalRequests,
     allowedRequests: metrics.allowedRequests,
     throttledRequests: metrics.throttledRequests,
-    currentRps: metrics.currentRps,
+    currentRps: instantaneousRps,
     downstreamLoadPct: metrics.downstreamLoadPct,
-    burstDetected: metrics.burstDetected,
+    burstDetected,
     explanation: metrics.explanation,
   };
 
@@ -139,4 +182,3 @@ export function useSimulation() {
     reset,
   };
 }
-

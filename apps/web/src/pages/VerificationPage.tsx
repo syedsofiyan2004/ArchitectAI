@@ -211,11 +211,11 @@ export const VerificationPage: React.FC = () => {
           {invariants.map((inv) => (
             <div key={inv.id} className="invariant-card">
               <div className="card-top">
-                <span className="badge-scope font-mono">{inv.scope}</span>
-                <span className="badge-enforcement font-mono">{inv.enforcement}</span>
+                <span className="badge-scope font-mono">{inv.severity.toUpperCase()}</span>
+                <span className="badge-enforcement font-mono">{inv.blocksCompletion ? 'BLOCKING' : 'ADVISORY'}</span>
               </div>
-              <h3 className="invariant-name">{inv.description}</h3>
-              <p className="invariant-rationale">{inv.rationale}</p>
+              <h3 className="invariant-name">{inv.property}</h3>
+              <p className="invariant-rationale">{inv.rationale || ''}</p>
             </div>
           ))}
         </div>
@@ -246,9 +246,9 @@ export const VerificationPage: React.FC = () => {
               {specs.map((spec) => (
                 <tr key={spec.id}>
                   <td className="spec-name-cell">
-                    <strong>{spec.name}</strong>
+                    <strong>{spec.target}</strong>
                   </td>
-                  <td className="spec-type-cell font-mono">{spec.kind}</td>
+                  <td className="spec-type-cell font-mono">{spec.action}</td>
                   <td className="spec-desc-cell">{spec.description}</td>
                   <td className="spec-auto-cell font-mono">
                     {spec.isAutomatable ? (

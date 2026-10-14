@@ -34,6 +34,9 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+      - name: Frontend typecheck
+        run: pnpm run web:typecheck
+
       - name: Build web application
         run: pnpm run web:build
 

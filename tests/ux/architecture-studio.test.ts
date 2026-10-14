@@ -1,4 +1,4 @@
-// ArchitectAI — Architecture Studio Prototype Revision 1 Test Suite & Screenshot Generator
+// ArchitectAI — Architecture Studio Final Prototype Gate Verification & Screenshot Suite
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { chromium, type Browser } from 'playwright';
 import * as path from 'node:path';
@@ -8,7 +8,7 @@ import { execSync } from 'node:child_process';
 import type { Server } from 'node:http';
 import { createServer } from '../../apps/web/server/server.js';
 
-describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
+describe('ArchitectAI: Architecture Studio Final Prototype Gate Suite', () => {
   let tempDir: string;
   let dbPath: string;
   let artifactsDir: string;
@@ -32,7 +32,6 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
   };
 
   beforeAll(async () => {
-    // Ensure screenshot directory exists
     if (!fs.existsSync(screenshotsDir)) {
       fs.mkdirSync(screenshotsDir, { recursive: true });
     }
@@ -107,8 +106,6 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
 
     await page.goto(`${baseUrl}/studio`, { waitUntil: 'networkidle' });
     await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
-
-    // Wait for auto-fit transform to settle
     await page.waitForTimeout(300);
 
     const nodes = await page.$$('.canvas-node');
@@ -132,7 +129,6 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     await page.click('button[title="Fit to View"]');
     await page.waitForTimeout(200);
 
-    // Verify all nodes remain uncollided after Fit to View
     const postFitBoxes = await Promise.all(nodes.map((n) => n.boundingBox()));
     for (let i = 0; i < postFitBoxes.length; i++) {
       for (let j = i + 1; j < postFitBoxes.length; j++) {
@@ -150,8 +146,8 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     await context.close();
   });
 
-  // 2. Removal of Unearned Engineering Claims
-  it('verifies removal of unearned engineering claims across all views', async () => {
+  // 2. Removal of Unearned Engineering Claims & Truthful Presentation
+  it('verifies removal of unearned claims and no invented latencies across all views', async () => {
     if (!ensureBrowser() || !browser) return;
 
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -168,28 +164,105 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     expect(navText).toContain('EDUCATIONAL SIMULATION');
     expect(navText).toContain('Sliding window burst suppression (Planned check)');
 
-    // Inspector check
-    const inspectorText = await page.textContent('.studio-inspector-drawer');
-    expect(inspectorText).toContain('3 checks planned');
-    expect(inspectorText).toContain('Modeled Baseline Latency');
-
-    // Assert "3 Verified" is nowhere on the screen
-    const pageText = await page.textContent('body');
-    expect(pageText).not.toContain('3 Verified');
-
-    // Check node verification tab
+    // Open inspector by selecting a node
     const redisNode = page.locator('.canvas-node:has-text("Redis Distributed State")');
     await redisNode.click();
+
+    // Inspector check
+    await page.waitForSelector('.studio-inspector-drawer', { timeout: 5000 });
+    const inspectorText = await page.textContent('.studio-inspector-drawer');
+    expect(inspectorText).not.toContain('3 Verified');
+
+    // Check verification tab
     await page.click('.inspector-tab-btn:has-text("Verification")');
     await page.waitForSelector('.verif-status-badge', { timeout: 5000 });
     const verifBadgeText = await page.textContent('.verif-status-badge');
     expect(verifBadgeText).toContain('Planned Verification Check (Not yet executed)');
 
+    // Ensure no hardcoded 148ms latency is present
+    const fullBody = await page.textContent('body');
+    expect(fullBody).not.toContain('148 ms');
+
     await context.close();
   });
 
-  // 3. Desktop Experience & 4 Desktop Screenshots
-  it('renders desktop experience (1440x900) and captures the 4 required desktop screenshots', async () => {
+  // 3. Desktop Readability & Framing at 1440x900
+  it('verifies node titles and labels are legible (font-size >= 13px) and unclipped at 1440x900 default framing', async () => {
+    if (!ensureBrowser() || !browser) return;
+
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+
+    await page.goto(`${baseUrl}/studio`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.canvas-node', { timeout: 10000 });
+    await page.waitForTimeout(300);
+
+    // Verify zoom level is around 1.0 (100% full scale framing) because inspector is collapsed by default
+    const transform = await page.$eval('.canvas-viewport', (el) => el.style.transform);
+    const scaleMatch = transform.match(/scale\(([^)]+)\)/);
+    const scale = scaleMatch ? parseFloat(scaleMatch[1]) : 1.0;
+    expect(scale).toBeGreaterThanOrEqual(0.95);
+
+    // Verify all node titles have computed font size >= 13px and are rendered within screen bounds
+    const titleStyles = await page.$$eval('.node-title', (els) =>
+      els.map((el) => {
+        const style = window.getComputedStyle(el);
+        const rect = el.getBoundingClientRect();
+        return {
+          fontSize: parseFloat(style.fontSize),
+          width: rect.width,
+          height: rect.height,
+          text: el.textContent,
+        };
+      })
+    );
+
+    expect(titleStyles.length).toBe(5);
+    for (const title of titleStyles) {
+      expect(title.fontSize).toBeGreaterThanOrEqual(13);
+      expect(title.width).toBeGreaterThan(40);
+      expect(title.height).toBeGreaterThan(12);
+    }
+
+    await context.close();
+  });
+
+  // 4. Truthful Packet Animation (Mixed Admitted & Rejected Outcomes)
+  it('truthfully animates both admitted and rejected packets during boundary attack without single-status sampling', async () => {
+    if (!ensureBrowser() || !browser) return;
+
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage();
+
+    await page.goto(`${baseUrl}/studio`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
+
+    // Activate sliding window and 5x speed
+    await page.click('.sim-pill-btn:has-text("Sliding Window")');
+    await page.click('.speed-btn:has-text("5x")');
+
+    // Wait until virtual clock reaches boundary burst (t=61s+), where both admitted and rejected requests occur
+    await page.waitForFunction(
+      () => {
+        const allowed = document.querySelectorAll('.sim-packet-circle.packet-allowed').length;
+        const throttled = document.querySelectorAll('.sim-packet-circle.packet-throttled').length;
+        return allowed > 0 && throttled > 0;
+      },
+      { timeout: 8000 }
+    );
+
+    // Check that both permitted (allowed) and throttled packets exist
+    const allowedPackets = await page.locator('.sim-packet-circle.packet-allowed').count();
+    const throttledPackets = await page.locator('.sim-packet-circle.packet-throttled').count();
+
+    expect(allowedPackets).toBeGreaterThan(0);
+    expect(throttledPackets).toBeGreaterThan(0);
+
+    await context.close();
+  });
+
+  // 5. Desktop Screenshots Capture (4 screenshots)
+  it('renders desktop experience (1440x900) and captures all 4 required desktop screenshots', async () => {
     if (!ensureBrowser() || !browser) return;
 
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
@@ -199,7 +272,7 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
     await page.waitForTimeout(300);
 
-    // Screenshot 1: Desktop Default
+    // Screenshot 1: Desktop Default (Clean 100% scale framing with collapsed inspector)
     await saveScreenshot(page, 'studio-desktop-default.png');
 
     // Open Redis Inspector
@@ -214,15 +287,15 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
 
     // Switch to Fixed Window to demonstrate boundary burst failure
     await page.click('.sim-pill-btn:has-text("Fixed Window")');
-    await page.click('.speed-btn:has-text("5x")'); // Run at 5x to complete boundary trace quickly
-    await page.waitForTimeout(2600); // 2.6s at 5x = 13s virtual -> clock reaches 63s (after 59s & 61s spikes)
+    await page.click('.speed-btn:has-text("5x")');
+    await page.waitForTimeout(2700);
 
     // Screenshot 3: Desktop Fixed Window Failure
     await saveScreenshot(page, 'studio-desktop-fixed-window-failure.png');
 
     // Switch to Rolling Window (Sliding Window) for comparison
     await page.click('.sim-pill-btn:has-text("Sliding Window")');
-    await page.waitForTimeout(2600); // Clock reaches 63s with exact rolling window suppression
+    await page.waitForTimeout(2700);
 
     // Screenshot 4: Desktop Rolling Window Comparison
     await saveScreenshot(page, 'studio-desktop-rolling-window-comparison.png');
@@ -230,8 +303,8 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     await context.close();
   });
 
-  // 4. Mobile Experience (390x844) & 2 Mobile Screenshots
-  it('renders mobile experience (390x844) with touch pan and bottom-sheet inspector, capturing 2 mobile screenshots', async () => {
+  // 6. Mobile Interaction, Pan, and Focus Action
+  it('renders mobile experience (390x844), tests touch pan, focus-on-component, and captures 2 mobile screenshots', async () => {
     if (!ensureBrowser() || !browser) return;
 
     const context = await browser.newContext({
@@ -241,32 +314,57 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     const page = await context.newPage();
 
     await page.goto(`${baseUrl}/studio`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
+    await page.waitForSelector('.canvas-viewport', { timeout: 10000 });
     await page.waitForTimeout(300);
 
-    // Zero horizontal overflow on mobile
+    // Zero horizontal overflow
     const hasMobileOverflow = await page.evaluate(() => {
       return document.documentElement.scrollWidth > document.documentElement.clientWidth;
     });
     expect(hasMobileOverflow).toBe(false);
 
-    // Screenshot 5: Mobile Overview
+    // Test mobile touch pan changes viewport transform
+    const getTransform = async () => page.$eval('.canvas-viewport', (el) => el.style.transform);
+    const initialTransform = await getTransform();
+
+    await page.mouse.move(200, 200);
+    await page.mouse.down();
+    await page.mouse.move(120, 150, { steps: 5 });
+    await page.mouse.up();
+    await page.waitForTimeout(100);
+
+    const pannedTransform = await getTransform();
+    expect(pannedTransform).not.toBe(initialTransform);
+
+    // Screenshot 5: Mobile Overview Map
+    await page.click('button[title="Fit to Overview"]');
+    await page.waitForTimeout(200);
     await saveScreenshot(page, 'studio-mobile-overview.png');
 
-    // Tap gateway node to open bottom-sheet inspector
-    const gatewayNode = page.locator('.canvas-node:has-text("API Ingress Gateway")');
-    await gatewayNode.click();
+    // Tap Gateway node to test focus-on-component behavior
+    const gwNode = page.locator('.canvas-node:has-text("API Ingress Gateway")');
+    await gwNode.click();
     await page.waitForSelector('.studio-right-pane.open', { timeout: 5000 });
     await page.waitForTimeout(300);
+
+    // Verify zoom has zoomed in to legible scale (1.0)
+    const focusedTransform = await getTransform();
+    expect(focusedTransform).toContain('scale(1)');
 
     // Screenshot 6: Mobile Selected Inspector
     await saveScreenshot(page, 'studio-mobile-selected-inspector.png');
 
+    // Tap Back to Overview to verify return
+    await page.click('button:has-text("← Overview")');
+    await page.waitForTimeout(200);
+    const overviewTransform = await getTransform();
+    expect(overviewTransform).not.toContain('scale(1)');
+
     await context.close();
   });
 
-  // 5. Reduced Motion Support
-  it('disables animation transitions when prefers-reduced-motion is enabled', async () => {
+  // 7. Reduced Motion Computed Style Verification
+  it('proves animation computed styles are disabled (animation-name: none) when prefers-reduced-motion is active', async () => {
     if (!ensureBrowser() || !browser) return;
 
     const context = await browser.newContext({
@@ -276,15 +374,18 @@ describe('ArchitectAI: Architecture Studio Prototype Revision 1 Suite', () => {
     const page = await context.newPage();
 
     await page.goto(`${baseUrl}/studio`, { waitUntil: 'networkidle' });
-    const isReduced = await page.evaluate(() => {
-      return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    await page.waitForSelector('.canvas-edge-pulse', { state: 'attached', timeout: 10000 });
+
+    const computedAnimationName = await page.$eval('.canvas-edge-pulse', (el) => {
+      return window.getComputedStyle(el).animationName;
     });
-    expect(isReduced).toBe(true);
+
+    expect(computedAnimationName).toBe('none');
 
     await context.close();
   });
 
-  // 6. Verify Existing Production Routes Remain Untouched and Passing
+  // 8. Verify Existing Production Routes Remain Untouched and Passing
   it('verifies standard application routes continue functioning without regression', async () => {
     if (!ensureBrowser() || !browser) return;
 

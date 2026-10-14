@@ -78,7 +78,6 @@ export class SimulationEngine {
   }
 
   setAlgorithm(alg: SimulationAlgorithm): void {
-    if (this.algorithm === alg) return;
     this.algorithm = alg;
     this.reset();
   }

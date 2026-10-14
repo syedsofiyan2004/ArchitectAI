@@ -15,12 +15,7 @@ import '../components/studio/ArchitectureStudio.css';
 
 export const ArchitectureStudioPage: React.FC = () => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(() => {
-    if (typeof window !== 'undefined') {
-      return window.innerWidth > 900;
-    }
-    return true;
-  });
+  const [isInspectorOpen, setIsInspectorOpen] = useState<boolean>(false);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState<boolean>(false);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -47,10 +42,29 @@ export const ArchitectureStudioPage: React.FC = () => {
     const w = container.clientWidth;
     const h = container.clientHeight;
     if (w <= 0 || h <= 0) return;
-    const scale = Math.min((w - 48) / 1100, (h - 48) / 650, 1.15);
+    const isMobile = w < 768;
+    const pad = isMobile ? 24 : 48;
+    const scale = Math.min((w - pad) / 1100, (h - pad) / 650, 1.05);
     const px = (w - 1100 * scale) / 2;
     const py = (h - 650 * scale) / 2;
     setZoomLevel(+scale.toFixed(2));
+    setPan({ x: Math.round(px), y: Math.round(py) });
+  }, []);
+
+  // Focus-on-selected-component behavior (readable zoom and centered framing)
+  const focusOnNode = useCallback((nodeId: string) => {
+    const node = STUDIO_NODES.find((n) => n.id === nodeId);
+    if (!node) return;
+    const container = document.querySelector('.studio-canvas-container');
+    const w = container?.clientWidth || 1000;
+    const h = container?.clientHeight || 650;
+    const isMobile = w < 768;
+    const targetZoom = isMobile ? 1.0 : 1.1;
+    // On mobile, center node in upper viewing area leaving room for bottom-sheet
+    const targetY = isMobile ? h * 0.28 : h / 2;
+    const px = w / 2 - node.x * targetZoom;
+    const py = targetY - node.y * targetZoom;
+    setZoomLevel(targetZoom);
     setPan({ x: Math.round(px), y: Math.round(py) });
   }, []);
 
@@ -65,17 +79,23 @@ export const ArchitectureStudioPage: React.FC = () => {
     };
   }, [handleFitToContent]);
 
-  // Re-fit canvas when inspector or mobile drawer toggles
+  // Re-fit canvas when inspector or mobile drawer toggles without selected entity
   useEffect(() => {
-    const timer = setTimeout(handleFitToContent, 220);
-    return () => clearTimeout(timer);
-  }, [isInspectorOpen, isMobileNavOpen, handleFitToContent]);
+    if (!selectedId) {
+      const timer = setTimeout(handleFitToContent, 220);
+      return () => clearTimeout(timer);
+    }
+  }, [isInspectorOpen, isMobileNavOpen, selectedId, handleFitToContent]);
 
-  const handleSelectNode = useCallback((nodeId: string) => {
-    setSelectedId(nodeId);
-    setIsInspectorOpen(true);
-    setIsMobileNavOpen(false);
-  }, []);
+  const handleSelectNode = useCallback(
+    (nodeId: string) => {
+      setSelectedId(nodeId);
+      setIsInspectorOpen(true);
+      setIsMobileNavOpen(false);
+      focusOnNode(nodeId);
+    },
+    [focusOnNode]
+  );
 
   const handleSelectEdge = useCallback((edgeId: string) => {
     setSelectedId(edgeId);
@@ -85,7 +105,9 @@ export const ArchitectureStudioPage: React.FC = () => {
 
   const handleClearSelection = useCallback(() => {
     setSelectedId(null);
-  }, []);
+    setIsInspectorOpen(false);
+    handleFitToContent();
+  }, [handleFitToContent]);
 
   // Keyboard accessibility
   useEffect(() => {
@@ -96,19 +118,19 @@ export const ArchitectureStudioPage: React.FC = () => {
 
       if (e.key === 'Escape') {
         if (selectedId) {
-          setSelectedId(null);
+          handleClearSelection();
         } else if (isMobileNavOpen) {
           setIsMobileNavOpen(false);
         }
       } else if (e.key === '+' || e.key === '=') {
         e.preventDefault();
-        setZoomLevel((z) => Math.min(1.8, +(z + 0.1).toFixed(2)));
+        setZoomLevel((z) => Math.min(2.0, +(z + 0.1).toFixed(2)));
       } else if (e.key === '-' || e.key === '_') {
         e.preventDefault();
         setZoomLevel((z) => Math.max(0.3, +(z - 0.1).toFixed(2)));
       } else if (e.key === '0') {
         e.preventDefault();
-        handleFitToContent();
+        handleClearSelection();
       } else if (e.code === 'Space') {
         // Toggle simulation with spacebar
         e.preventDefault();
@@ -118,7 +140,7 @@ export const ArchitectureStudioPage: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedId, isMobileNavOpen, togglePlay, handleFitToContent]);
+  }, [selectedId, isMobileNavOpen, togglePlay, handleClearSelection]);
 
   return (
     <div className="architecture-studio-layout">
@@ -130,7 +152,7 @@ export const ArchitectureStudioPage: React.FC = () => {
         onTogglePlay={togglePlay}
         onResetSimulation={reset}
         zoomLevel={zoomLevel}
-        onZoomIn={() => setZoomLevel((z) => Math.min(1.8, +(z + 0.1).toFixed(2)))}
+        onZoomIn={() => setZoomLevel((z) => Math.min(2.0, +(z + 0.1).toFixed(2)))}
         onZoomOut={() => setZoomLevel((z) => Math.max(0.3, +(z - 0.1).toFixed(2)))}
         onZoomReset={handleFitToContent}
         isInspectorOpen={isInspectorOpen}
@@ -151,9 +173,21 @@ export const ArchitectureStudioPage: React.FC = () => {
           {isMobileNavOpen ? 'Close Menu' : 'Sim & Components'}
         </button>
 
-        <span className="mobile-mode-indicator">
-          {simulation.algorithm === 'ROLLING_WINDOW' ? 'Sliding Window' : 'Fixed Window'}
-        </span>
+        {selectedId ? (
+          <button
+            type="button"
+            className="mobile-overview-btn font-mono"
+            onClick={handleClearSelection}
+            title="Back to Overview Map"
+            aria-label="Back to Overview Map"
+          >
+            ← Overview
+          </button>
+        ) : (
+          <span className="mobile-mode-indicator">
+            {simulation.algorithm === 'ROLLING_WINDOW' ? 'Sliding Window' : 'Fixed Window'}
+          </span>
+        )}
 
         <button
           type="button"
@@ -198,8 +232,10 @@ export const ArchitectureStudioPage: React.FC = () => {
             onSelectEdge={handleSelectEdge}
             onClearSelection={handleClearSelection}
             zoomLevel={zoomLevel}
+            onZoomChange={setZoomLevel}
             pan={pan}
             onPanChange={setPan}
+            onFitToOverview={handleFitToContent}
             packets={packets}
             simulation={simulation}
           />

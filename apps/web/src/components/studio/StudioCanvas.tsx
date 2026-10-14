@@ -8,6 +8,9 @@ import {
   Layers,
   Activity,
   Shield,
+  ZoomIn,
+  ZoomOut,
+  Maximize2,
 } from 'lucide-react';
 import { StudioNode, StudioEdge, TrustBoundary, SimulationState } from './types';
 import { SimulatedPacket } from './useSimulation';
@@ -24,8 +27,10 @@ interface StudioCanvasProps {
   onSelectEdge: (edgeId: string) => void;
   onClearSelection: () => void;
   zoomLevel: number;
+  onZoomChange: (zoom: number) => void;
   pan: { x: number; y: number };
   onPanChange: (pan: { x: number; y: number }) => void;
+  onFitToOverview: () => void;
   packets: SimulatedPacket[];
   simulation: SimulationState;
 }
@@ -45,26 +50,54 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   onSelectEdge,
   onClearSelection,
   zoomLevel,
+  onZoomChange,
   pan,
   onPanChange,
+  onFitToOverview,
   packets,
   simulation,
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isPanning, setIsPanning] = useState(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const isPanningRef = useRef(false);
+  const hasDragged = useRef(false);
+  const dragOrigin = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const dragStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Multi-pointer tracking for pinch zoom
+  const activePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStartDist = useRef<number | null>(null);
+  const pinchStartZoom = useRef<number>(1.0);
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Only pan on background click, not on nodes or edge hitboxes
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Only pan on background click, not on nodes, edges, or floating controls
     if (
       (e.target as HTMLElement).closest('.canvas-node') ||
       (e.target as HTMLElement).closest('.canvas-edge-hit') ||
-      (e.target as HTMLElement).closest('.canvas-edge-badge-group')
+      (e.target as HTMLElement).closest('.canvas-edge-badge-group') ||
+      (e.target as HTMLElement).closest('.canvas-floating-controls')
     ) {
       return;
     }
-    setIsPanning(true);
-    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+
+    if (activePointers.current.size === 1) {
+      isPanningRef.current = true;
+      hasDragged.current = false;
+      dragOrigin.current = { x: e.clientX, y: e.clientY };
+      dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      setIsPanning(true);
+    } else if (activePointers.current.size === 2) {
+      // Multi-pointer touch pinch scaling
+      isPanningRef.current = false;
+      setIsPanning(false);
+      const points = Array.from(activePointers.current.values());
+      const dist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      pinchStartDist.current = dist;
+      pinchStartZoom.current = zoomLevel;
+    }
+
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -73,22 +106,122 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
   };
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (!isPanning) return;
-    onPanChange({
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y,
-    });
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    // Check multi-pointer pinch zoom
+    if (activePointers.current.size === 2 && pinchStartDist.current && pinchStartDist.current > 0) {
+      const points = Array.from(activePointers.current.values());
+      const currentDist = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      const factor = currentDist / pinchStartDist.current;
+      const newZoom = Math.min(2.0, Math.max(0.3, +(pinchStartZoom.current * factor).toFixed(2)));
+      onZoomChange(newZoom);
+      return;
+    }
+
+    if (!isPanningRef.current || activePointers.current.size !== 1) return;
+    if (Math.hypot(e.clientX - dragOrigin.current.x, e.clientY - dragOrigin.current.y) > 3) {
+      hasDragged.current = true;
+    }
+    const nextPan = {
+      x: e.clientX - dragStartRef.current.x,
+      y: e.clientY - dragStartRef.current.y,
+    };
+    onPanChange(nextPan);
   };
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    if (isPanning) {
+    activePointers.current.delete(e.pointerId);
+    if (activePointers.current.size < 2) {
+      pinchStartDist.current = null;
+    }
+    if (activePointers.current.size === 0) {
+      isPanningRef.current = false;
       setIsPanning(false);
+      setTimeout(() => {
+        hasDragged.current = false;
+      }, 100);
       try {
         e.currentTarget.releasePointerCapture(e.pointerId);
       } catch {
         // ignore
       }
     }
+  };
+
+  // Direct touch fallback support for mobile browsers and touch emulators
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (
+      (e.target as HTMLElement).closest('.canvas-node') ||
+      (e.target as HTMLElement).closest('.canvas-edge-hit') ||
+      (e.target as HTMLElement).closest('.canvas-edge-badge-group') ||
+      (e.target as HTMLElement).closest('.canvas-floating-controls')
+    ) {
+      return;
+    }
+    if (e.touches.length === 1) {
+      const touch = e.touches[0];
+      isPanningRef.current = true;
+      hasDragged.current = false;
+      dragOrigin.current = { x: touch.clientX, y: touch.clientY };
+      dragStartRef.current = { x: touch.clientX - pan.x, y: touch.clientY - pan.y };
+      setIsPanning(true);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (!isPanningRef.current || e.touches.length !== 1) return;
+    const touch = e.touches[0];
+    if (Math.hypot(touch.clientX - dragOrigin.current.x, touch.clientY - dragOrigin.current.y) > 3) {
+      hasDragged.current = true;
+    }
+    onPanChange({
+      x: touch.clientX - dragStartRef.current.x,
+      y: touch.clientY - dragStartRef.current.y,
+    });
+  };
+
+  const handleTouchEnd = () => {
+    isPanningRef.current = false;
+    setIsPanning(false);
+    setTimeout(() => {
+      hasDragged.current = false;
+    }, 100);
+  };
+
+  // Mouse fallback for environments where pointer events are not synthesized
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (
+      (e.target as HTMLElement).closest('.canvas-node') ||
+      (e.target as HTMLElement).closest('.canvas-edge-hit') ||
+      (e.target as HTMLElement).closest('.canvas-edge-badge-group') ||
+      (e.target as HTMLElement).closest('.canvas-floating-controls')
+    ) {
+      return;
+    }
+    isPanningRef.current = true;
+    hasDragged.current = false;
+    dragOrigin.current = { x: e.clientX, y: e.clientY };
+    dragStartRef.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+    setIsPanning(true);
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isPanningRef.current) return;
+    if (Math.hypot(e.clientX - dragOrigin.current.x, e.clientY - dragOrigin.current.y) > 3) {
+      hasDragged.current = true;
+    }
+    onPanChange({
+      x: e.clientX - dragStartRef.current.x,
+      y: e.clientY - dragStartRef.current.y,
+    });
+  };
+
+  const handleMouseUp = () => {
+    isPanningRef.current = false;
+    setIsPanning(false);
+    setTimeout(() => {
+      hasDragged.current = false;
+    }, 100);
   };
 
   const getNodeIcon = (category: string) => {
@@ -152,7 +285,15 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
       onPointerCancel={handlePointerUp}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      onMouseMove={handleMouseMove}
+      onMouseUp={handleMouseUp}
       onClick={(e) => {
+        if (hasDragged.current) return;
         if (
           e.target === containerRef.current ||
           (e.target as HTMLElement).classList.contains('canvas-viewport') ||
@@ -366,9 +507,7 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                         isOverloaded && node.metrics.label2.includes('Latency') ? 'text-danger' : ''
                       }`}
                     >
-                      {isOverloaded && node.metrics.label2.includes('Latency')
-                        ? '148 ms (High)'
-                        : node.metrics.value2}
+                      {node.metrics.value2}
                     </span>
                   </div>
                 </div>
@@ -383,6 +522,38 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
             );
           })}
         </div>
+      </div>
+
+      {/* Floating Canvas Controls (Accessible on Mobile & Desktop) */}
+      <div className="canvas-floating-controls" aria-label="Canvas Zoom & Overview Controls">
+        <button
+          type="button"
+          className="canvas-floating-btn"
+          onClick={() => onZoomChange(Math.min(2.0, +(zoomLevel + 0.15).toFixed(2)))}
+          title="Zoom In"
+          aria-label="Zoom In"
+        >
+          <ZoomIn size={15} />
+        </button>
+        <button
+          type="button"
+          className="canvas-floating-btn"
+          onClick={() => onZoomChange(Math.max(0.3, +(zoomLevel - 0.15).toFixed(2)))}
+          title="Zoom Out"
+          aria-label="Zoom Out"
+        >
+          <ZoomOut size={15} />
+        </button>
+        <button
+          type="button"
+          className="canvas-floating-btn btn-fit-overview"
+          onClick={onFitToOverview}
+          title="Fit to Overview"
+          aria-label="Fit to Overview"
+        >
+          <Maximize2 size={13} />
+          <span>Fit Overview</span>
+        </button>
       </div>
 
       {/* Canvas Overlay Legend */}
@@ -403,7 +574,6 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           <span className="legend-dot dot-throttled" />
           <span>429 Rate Limited</span>
         </div>
-        <div className="legend-hint">Click any component to inspect trade-offs & invariants</div>
       </div>
     </div>
   );

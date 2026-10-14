@@ -379,7 +379,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onOpenExamples }) => {
                       <span>{new Date(run.createdAt).toLocaleDateString()}</span>
                     </span>
                     <div className="run-card-status-wrap">
-                      <StatusBadge state={run.state || (run.status === 'completed' ? 'READY_FOR_IMPLEMENTATION' : run.status === 'analyzing' ? 'ANALYZING' : 'DRAFT')} />
+                      <StatusBadge status={run.state || (run.status === 'completed' ? 'READY_FOR_IMPLEMENTATION' : run.status === 'analyzing' ? 'ANALYZING' : 'DRAFT')} />
                     </div>
                   </div>
 
