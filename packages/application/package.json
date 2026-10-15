@@ -4,6 +4,11 @@
   "private": true,
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "exports": {
+    ".": "./dist/index.js",
+    "./services/architecture-graph-projector": "./dist/services/architecture-graph-projector.js",
+    "./services/architecture-graph-projector.js": "./dist/services/architecture-graph-projector.js"
+  },
   "scripts": {
     "build": "tsc -b",
     "typecheck": "tsc -b --noEmit"

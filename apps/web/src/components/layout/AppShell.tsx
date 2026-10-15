@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
@@ -22,6 +22,13 @@ export const AppShell: React.FC<AppShellProps> = ({ children }) => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
+  const isStudio = location.pathname.startsWith('/studio') || location.pathname.startsWith('/prototype');
+
+  // Bypass AppShell for isolated studio route
+  if (isStudio) {
+    return <>{children}</>;
+  }
 
   // Global keyboard shortcuts (Cmd+K for palette, N for new analysis when not in input)
   useEffect(() => {

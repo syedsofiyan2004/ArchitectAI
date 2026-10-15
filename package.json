@@ -18,7 +18,8 @@
     "codex:smoke": "tsx packages/application/src/codex-smoke.ts",
     "web:dev": "pnpm --filter @architectai/web dev",
     "web:build": "pnpm --filter @architectai/web build",
-    "web:start": "pnpm --filter @architectai/web start"
+    "web:start": "pnpm --filter @architectai/web start",
+    "web:typecheck": "pnpm --filter @architectai/web typecheck"
   },
   "devDependencies": {
     "@architectai/domain": "workspace:*",

@@ -17,4 +17,5 @@ export * from './use-cases/execute-repair-loop.use-case.js';
 export * from './services/process-supervisor.js';
 export * from './services/security-redaction.js';
 export * from './services/provider-resilience.js';
+export * from './services/architecture-graph-projector.js';
 export * from './persistence/index.js';
