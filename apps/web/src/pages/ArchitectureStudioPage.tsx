@@ -22,6 +22,9 @@ export const ArchitectureStudioPage: React.FC = () => {
   const [remoteRunData, setRemoteRunData] = useState<{
     contract: import('@architectai/domain').EngineeringContract;
     projection: import('@architectai/domain').ArchitectureGraphProjection;
+    groundingStatus?: 'supported_by_contract' | 'proposed_design' | 'needs_clarification';
+    synthesisMode?: 'deterministic_demo' | 'live_provider';
+    providerName?: string;
   } | null>(null);
 
   const [selectedContractId, setSelectedContractId] = useState<string>(
@@ -34,20 +37,18 @@ export const ArchitectureStudioPage: React.FC = () => {
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
-  // Load real persisted run if ?runId= is in URL
-  useEffect(() => {
-    if (!urlRunId) {
-      setRemoteRunData(null);
-      return;
-    }
-    let cancelled = false;
+  const fetchRemoteRun = useCallback(() => {
+    if (!urlRunId) return;
     fetch(`/api/runs/${urlRunId}/architecture-graph`)
       .then((res) => res.json())
       .then((data) => {
-        if (!cancelled && data.success && data.contract && data.projection) {
+        if (data.success && data.contract && data.projection) {
           setRemoteRunData({
             contract: data.contract,
             projection: data.projection,
+            groundingStatus: data.groundingStatus || data.projection.groundingStatus,
+            synthesisMode: data.synthesisMode,
+            providerName: data.providerName,
           });
           setSelectedId(null);
         }
@@ -55,10 +56,16 @@ export const ArchitectureStudioPage: React.FC = () => {
       .catch(() => {
         // ignore fetch error
       });
-    return () => {
-      cancelled = true;
-    };
   }, [urlRunId]);
+
+  // Load real persisted run if ?runId= is in URL
+  useEffect(() => {
+    if (!urlRunId) {
+      setRemoteRunData(null);
+      return;
+    }
+    fetchRemoteRun();
+  }, [urlRunId, fetchRemoteRun]);
 
   // Update URL search param when selected contract changes
   const handleSelectContract = useCallback(
@@ -240,6 +247,10 @@ export const ArchitectureStudioPage: React.FC = () => {
         activeContractId={selectedContractId}
         onSelectContract={handleSelectContract}
         simulationAvailable={simulationAvailable}
+        groundingStatus={remoteRunData ? remoteRunData.groundingStatus : projection.groundingStatus}
+        synthesisMode={remoteRunData?.synthesisMode}
+        onRefresh={urlRunId ? fetchRemoteRun : undefined}
+        isRealRun={Boolean(urlRunId)}
       />
 
       {/* Mobile Quick Action Buttons Bar */}

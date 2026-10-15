@@ -190,7 +190,7 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
               </p>
             </div>
 
-            {/* Projection Status Banner */}
+            {/* Projection & Grounding Status Banner */}
             {projection && (
               <div
                 className={`projection-status-card font-mono status-${projection.status}`}
@@ -198,17 +198,46 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
                   padding: '10px 14px',
                   borderRadius: '6px',
                   marginBottom: '16px',
-                  background: projection.status === 'valid' ? 'rgba(16, 185, 129, 0.1)' : 'rgba(245, 158, 11, 0.15)',
-                  border: `1px solid ${projection.status === 'valid' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.4)'}`,
+                  background:
+                    projection.groundingStatus === 'supported_by_contract'
+                      ? 'rgba(16, 185, 129, 0.1)'
+                      : projection.groundingStatus === 'proposed_design'
+                      ? 'rgba(56, 189, 248, 0.12)'
+                      : 'rgba(245, 158, 11, 0.15)',
+                  border: `1px solid ${
+                    projection.groundingStatus === 'supported_by_contract'
+                      ? 'rgba(16, 185, 129, 0.3)'
+                      : projection.groundingStatus === 'proposed_design'
+                      ? 'rgba(56, 189, 248, 0.35)'
+                      : 'rgba(245, 158, 11, 0.4)'
+                  }`,
                   fontSize: '11px',
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '4px' }}>
-                  <span style={{ fontWeight: 700, color: projection.status === 'valid' ? '#10b981' : '#f59e0b' }}>
-                    PROJECTION STATUS: {projection.status.toUpperCase()}
+                  <span
+                    style={{
+                      fontWeight: 700,
+                      color:
+                        projection.groundingStatus === 'supported_by_contract'
+                          ? '#10b981'
+                          : projection.groundingStatus === 'proposed_design'
+                          ? '#38bdf8'
+                          : '#f59e0b',
+                    }}
+                  >
+                    GROUNDING:{' '}
+                    {projection.groundingStatus
+                      ? projection.groundingStatus.replace(/_/g, ' ').toUpperCase()
+                      : projection.status.toUpperCase()}
                   </span>
                   <span style={{ color: '#94a3b8' }}>Revision {projection.contractRevision}</span>
                 </div>
+                {projection.contractFingerprint && (
+                  <div style={{ color: '#94a3b8', fontSize: '10px', marginTop: '2px' }}>
+                    Fingerprint: {projection.contractFingerprint}
+                  </div>
+                )}
                 {projection.missingSources && projection.missingSources.length > 0 && (
                   <div style={{ color: '#fbbf24', marginTop: '6px' }}>
                     Missing Sources: {projection.missingSources.join(', ')}
@@ -289,6 +318,25 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
             {/* TAB 1: OVERVIEW */}
             {activeTab === 'overview' && (
               <div className="tab-pane">
+                {(selectedEntity.confidence === 'inferred_proposed' ||
+                  selectedEntity.origin === 'inferred_topology') && (
+                  <div
+                    className="proposed-banner font-mono"
+                    style={{
+                      padding: '8px 12px',
+                      borderRadius: '6px',
+                      marginBottom: '14px',
+                      background: 'rgba(56, 189, 248, 0.12)',
+                      border: '1px solid rgba(56, 189, 248, 0.35)',
+                      color: '#38bdf8',
+                      fontSize: '11px',
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    <strong>⚠️ Proposed Design Element:</strong> This {isNode ? 'component' : 'connection'} is inferred from system intent. It requires confirmation through an explicit architectural decision.
+                  </div>
+                )}
+
                 <div className="content-block">
                   <h4 className="block-title">Architectural Role & Purpose</h4>
                   <p className="block-text">{selectedEntity.purpose}</p>
@@ -363,12 +411,12 @@ export const StudioInspector: React.FC<StudioInspectorProps> = ({
                   </div>
                 )}
 
-                {/* Unresolved Questions */}
-                {isNode && (selectedEntity as StudioNode).unresolvedQuestions && (selectedEntity as StudioNode).unresolvedQuestions!.length > 0 && (
+                {/* Unresolved Questions & Confirmation Criteria */}
+                {selectedEntity.unresolvedQuestions && selectedEntity.unresolvedQuestions.length > 0 && (
                   <div className="content-block">
-                    <h4 className="block-title">Unresolved Questions</h4>
+                    <h4 className="block-title">Unresolved Questions & Confirmation Criteria</h4>
                     <ul className="tradeoffs-list font-mono" style={{ fontSize: '12px' }}>
-                      {(selectedEntity as StudioNode).unresolvedQuestions!.map((q: string, idx: number) => (
+                      {selectedEntity.unresolvedQuestions.map((q: string, idx: number) => (
                         <li key={idx} className="tradeoff-item">
                           <span className="tradeoff-bullet text-warning">❓</span>
                           <span>{q}</span>

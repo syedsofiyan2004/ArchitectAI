@@ -471,6 +471,8 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
           {/* Generic Edge Connections */}
           {edges.map((edge) => {
             const isSelected = selectedId === edge.id;
+            const isProposed =
+              edge.origin === 'inferred_topology' || edge.confidence === 'inferred_proposed';
             const sourceNode = nodeMap.get(edge.source);
             const targetNode = nodeMap.get(edge.target);
             const routing = computeGenericEdgePath(edge, sourceNode, targetNode);
@@ -490,7 +492,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                 {/* Visible base path */}
                 <path
                   d={routing.pathData}
-                  className={`canvas-edge-line ${isSelected ? 'selected' : ''}`}
+                  className={`canvas-edge-line ${isProposed ? 'edge-proposed' : ''} ${
+                    isSelected ? 'selected' : ''
+                  }`}
                   markerEnd={isSelected ? 'url(#arrowhead-selected)' : 'url(#arrowhead)'}
                 />
 
@@ -513,15 +517,24 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                   style={{ cursor: 'pointer' }}
                 >
                   <rect
-                    x="-60"
+                    x={isProposed ? '-70' : '-60'}
                     y="-11"
-                    width="120"
+                    width={isProposed ? '140' : '120'}
                     height="22"
                     rx="4"
-                    className={`edge-badge-bg ${isSelected ? 'selected' : ''}`}
+                    className={`edge-badge-bg ${isProposed ? 'edge-badge-proposed' : ''} ${
+                      isSelected ? 'selected' : ''
+                    }`}
                   />
-                  <text x="0" y="3" textAnchor="middle" className="edge-badge-text font-mono">
-                    {edge.protocol || edge.label || 'LINK'}
+                  <text
+                    x="0"
+                    y="3"
+                    textAnchor="middle"
+                    className={`edge-badge-text font-mono ${isProposed ? 'badge-proposed' : ''}`}
+                  >
+                    {isProposed
+                      ? `[Proposed] ${edge.protocol || edge.label || 'LINK'}`
+                      : edge.protocol || edge.label || 'LINK'}
                   </text>
                 </g>
               </g>
@@ -606,6 +619,9 @@ export const StudioCanvas: React.FC<StudioCanvasProps> = ({
                   <div className="node-icon-frame">{getNodeIcon(node.category)}</div>
                   <div className="node-title-group">
                     <span className="node-tier-pill font-mono">{tierLabel}</span>
+                    {(node.confidence === 'inferred_proposed' || node.origin === 'inferred_topology') && (
+                      <span className="node-proposed-pill font-mono">PROPOSED</span>
+                    )}
                     <strong className="node-title">{node.label}</strong>
                   </div>
                   <span

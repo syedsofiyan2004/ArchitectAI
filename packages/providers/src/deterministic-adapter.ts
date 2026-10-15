@@ -1156,6 +1156,7 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
           projectionVersion: '1.0.0',
           createdAt: new Date().toISOString(),
           status: 'incomplete',
+          groundingStatus: 'needs_clarification',
           nodes: [],
           edges: [],
           boundaries: [],
@@ -1280,16 +1281,21 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
       // 3. Connect Edges along architectural tiers
       const nonClientNodes = nodes.filter((n) => n.id !== clientNodeId);
       const ingressOrServices = nonClientNodes.filter((n) => n.category === 'gateway' || n.category === 'service');
-      const entryPoints = ingressOrServices.length > 0 ? ingressOrServices : [nonClientNodes[0]!];
+      const entry = ingressOrServices.length > 0 ? ingressOrServices[0]! : nonClientNodes[0];
 
-      for (const entry of entryPoints) {
+      if (entry) {
+        const isWs = rawIntentLower.includes('websocket');
+        const isHttps = rawIntentLower.includes('https');
+        const isHttp = rawIntentLower.includes('http') || rawIntentLower.includes('rest');
+        const clientProto = isWs ? 'WebSocket' : isHttps ? 'HTTPS' : isHttp ? 'HTTP' : '';
+
         edges.push({
           id: `edge-${clientNodeId}-${entry.id}`,
           source: clientNodeId,
           target: entry.id,
-          label: 'Client Requests',
-          protocol: 'HTTPS REST',
-          direction: 'unidirectional',
+          label: 'Client Ingress',
+          protocol: clientProto,
+          direction: isWs ? 'bidirectional' : 'unidirectional',
           isSelfLoop: false,
           origin: 'inferred_topology',
           confidence: 'inferred_proposed',
@@ -1299,24 +1305,24 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
           sourceSpecIds: [],
           purpose: `Inbound requests from client to ${entry.label}.`,
           whySelected: 'Client entry connection.',
-          assumptions: ['Clients communicate via HTTP or secure WebSocket.'],
+          assumptions: ['Clients communicate across public network boundary to ingress entry point.'],
+          unresolvedQuestions: ['What authentication mechanism is enforced at ingress?'],
           evidenceReferences: [],
         });
       }
 
       // Connect gateway/services to backends (datastores, caches, queues)
-      const backendNodes = nonClientNodes.filter((n) => !entryPoints.includes(n));
+      const backendNodes = nonClientNodes.filter((n) => n.id !== entry?.id);
       for (const backend of backendNodes) {
-        const sourceNode = entryPoints[0]!;
+        if (!entry) break;
         edges.push({
-          id: `edge-${sourceNode.id}-${backend.id}`,
-          source: sourceNode.id,
+          id: `edge-${entry.id}-${backend.id}`,
+          source: entry.id,
           target: backend.id,
           label: backend.category === 'datastore' ? 'Read / Write Query' :
                  backend.category === 'cache' ? 'Cache / Mutex Lock' :
                  backend.category === 'queue' ? 'Publish Event' : 'Downstream Hop',
-          protocol: backend.category === 'datastore' ? 'SQL / Database Protocol' :
-                    backend.category === 'cache' ? 'TCP Key-Value' : 'AMQP / HTTP',
+          protocol: '', // Do NOT invent wire protocol unless grounded in contract text
           direction: backend.category === 'cache' ? 'bidirectional' : 'unidirectional',
           isSelfLoop: false,
           origin: 'inferred_topology',
@@ -1325,9 +1331,10 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
           sourceConcernIds: [],
           sourceInvariantIds: [],
           sourceSpecIds: [],
-          purpose: `Integration between ${sourceNode.label} and ${backend.label}.`,
+          purpose: `Integration between ${entry.label} and ${backend.label}.`,
           whySelected: 'Inferred operational dependency.',
-          assumptions: [],
+          assumptions: [`Internal network connectivity between ${entry.label} and ${backend.label}.`],
+          unresolvedQuestions: [`What protocol and connection pooling parameters are used?`],
           evidenceReferences: [],
         });
       }
@@ -1362,6 +1369,7 @@ export class DeterministicDemoProviderAdapter implements ProviderAdapter {
         projectionVersion: '1.0.0',
         createdAt: new Date().toISOString(),
         status: 'valid',
+        groundingStatus: 'proposed_design',
         nodes,
         edges,
         boundaries,

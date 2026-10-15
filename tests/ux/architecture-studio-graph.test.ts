@@ -355,55 +355,519 @@ describe('Architecture Studio Graph Integration Suite', () => {
     await page.close();
   });
 
-  // 9. Real Persisted Run Architecture Graph Browser Test
-  it('9. opens a REAL persisted run architecture-graph endpoint in browser and proves end-to-end rendering', async () => {
-    // 9A. Create a real project via API
+  // 9. Real Persisted Run A: Doctor Appointment Booking with Concurrent Slot Hold
+  it('9. Real Persisted Run A: Appointment Booking renders grounded topology, proposed edge styles, and captures studio-realrun-appointment-booking.png', async () => {
+    // 9A. Create project
     const projRes = await fetch(`${baseUrl}/api/projects`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: 'Persisted Clinic Project', description: 'End-to-End Grounded Studio Test' }),
+      body: JSON.stringify({ name: 'Clinic Appointment Platform', description: 'Concurrent Slot Reservation' }),
     });
     expect(projRes.ok).toBe(true);
     const { project } = await projRes.json();
 
-    // 9B. Start a real run with requirement intent
+    // 9B. Booking Contract with Redis Mutex and PostgreSQL Ledger
+    const bookingContract = {
+      id: 'contract-appointment-booking',
+      version: '1.0.0',
+      requirement: {
+        id: 'req-booking',
+        rawIntent: 'Build a doctor appointment booking service with concurrent seat and time slot reservations.',
+        explicitConstraints: ['No double booking permitted', 'Atomic slot hold with 10m TTL'],
+        declaredTechStack: ['Node.js', 'PostgreSQL', 'Redis'],
+        context: { title: 'Doctor Appointment Booking', clientType: 'Patient & Clinic Portals' },
+      },
+      discoveredConcerns: [
+        {
+          id: 'concern-double-booking',
+          requirementId: 'req-booking',
+          title: 'Concurrent Appointment Slot Race Condition',
+          description: 'Two patients booking the same appointment slot simultaneously.',
+          applicabilityReason: 'Shared calendar state without atomic slot acquisition.',
+          dimensions: ['concurrency', 'shared_mutable_state'],
+          supportingKnowledgeIds: [],
+          confidence: 0.95,
+          assumptions: [],
+          unresolvedQuestions: [],
+        },
+      ],
+      decisions: [
+        {
+          id: 'dec-slot-mutex',
+          problemContext: 'Distributed Slot Hold Mutex',
+          consideredOptions: [
+            {
+              id: 'opt-mutex',
+              name: 'Redis Distributed Slot Lock (SETNX with 10m TTL)',
+              description: 'Locks slot during patient checkout',
+              tradeoffs: 'Locks must expire gracefully if checkout is abandoned',
+            },
+          ],
+          selectedOptionId: 'opt-mutex',
+          selectedOptionName: 'Redis Distributed Slot Lock (SETNX with 10m TTL)',
+          rationale: 'Holds the appointment slot for 10 minutes to prevent double booking during checkout.',
+          evidence: [],
+          assumptions: ['Hold timeout releases slot if checkout abandoned.'],
+          risksAndTradeoffs: ['Unused hold locks must expire gracefully.'],
+          verificationRequirements: ['Assert second booking attempt on held slot receives 409 Conflict.'],
+          reconsiderationTriggers: [],
+        },
+        {
+          id: 'dec-booking-db',
+          problemContext: 'PostgreSQL Relational Booking Ledger',
+          consideredOptions: [
+            {
+              id: 'opt-pg',
+              name: 'PostgreSQL Relational DB with Row-Level Locking',
+              description: 'ACID appointment calendar ledger',
+              tradeoffs: 'Row locks serialize simultaneous updates on doctor schedule',
+            },
+          ],
+          selectedOptionId: 'opt-pg',
+          selectedOptionName: 'PostgreSQL Relational DB with Row-Level Locking',
+          rationale: 'Guarantees ACID persistence for confirmed patient appointments with unique calendar constraints.',
+          evidence: [],
+          assumptions: ['Database enforces unique calendar slot constraints.'],
+          risksAndTradeoffs: [],
+          verificationRequirements: [],
+          reconsiderationTriggers: [],
+        },
+      ],
+      invariants: [
+        {
+          id: 'inv-no-double-booking',
+          property: 'No appointment slot can ever be confirmed for two distinct patients.',
+          severity: 'critical',
+          blocksCompletion: true,
+          rationale: 'Patient booking calendar integrity.',
+        },
+      ],
+      verificationSpecs: [],
+      assumptions: ['Clinic hours are localized to doctor timezone.'],
+      unresolvedQuestions: ['What failover strategy is needed for PostgreSQL primary?'],
+      metadata: {
+        status: 'accepted',
+        createdAt: '2026-10-14T08:00:00.000Z',
+        tags: [],
+      },
+    };
+
+    // 9C. Persist run via POST /api/projects/:id/runs
     const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        rawIntent: 'Build a doctor appointment booking service with concurrent slot reservation.',
-        explicitConstraints: ['No duplicate bookings'],
-        declaredTechStack: ['Node.js', 'PostgreSQL', 'Redis'],
-        context: { title: 'Clinic Booking System' },
+        rawIntent: bookingContract.requirement.rawIntent,
+        explicitConstraints: bookingContract.requirement.explicitConstraints,
+        declaredTechStack: bookingContract.requirement.declaredTechStack,
+        context: bookingContract.requirement.context,
+        contract: bookingContract,
       }),
     });
     expect(runRes.ok).toBe(true);
     const { runId } = await runRes.json();
 
-    // 9C. Query GET /api/runs/:runId/architecture-graph
+    // 9D. Verify GET /api/runs/:runId/architecture-graph
     const graphRes = await fetch(`${baseUrl}/api/runs/${runId}/architecture-graph`);
     expect(graphRes.status).toBe(200);
     const graphData = await graphRes.json();
     expect(graphData.success).toBe(true);
     expect(graphData.runId).toBe(runId);
     expect(graphData.status).toBe('valid');
-    expect(graphData.projection.nodes.length).toBeGreaterThan(0);
-    expect(graphData.projection.contractFingerprint).toMatch(/^cfp_/);
+    expect(graphData.groundingStatus).toBe('proposed_design');
+    expect(graphData.synthesisMode).toBe('deterministic_demo');
 
-    // 9D. Open ?runId= in Playwright browser and assert real run renders in Studio!
+    // 9E. Assert candidate edges carry assumptions and questions, not invented protocols
+    const candidateEdge = graphData.projection.edges.find((e: any) => e.origin === 'inferred_topology');
+    expect(candidateEdge).toBeDefined();
+    expect(candidateEdge.assumptions.length).toBeGreaterThan(0);
+    expect(candidateEdge.unresolvedQuestions.length).toBeGreaterThan(0);
+
+    // 9F. Browser render and screenshot
     if (!hasChromium || !browser) return;
 
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await page.goto(`${baseUrl}/studio?runId=${runId}`, { waitUntil: 'networkidle' });
     await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
 
-    // Verify canvas rendered the persisted run's nodes
-    const renderedNodes = await page.locator('.canvas-node').count();
-    expect(renderedNodes).toBeGreaterThan(0);
+    // Assert LIVE RUN and PROPOSED DESIGN pills in header
+    expect(await page.locator('.studio-demo-pill:has-text("LIVE RUN")').isVisible()).toBe(true);
+    expect(await page.locator('header:has-text("PROPOSED DESIGN")').isVisible()).toBe(true);
 
-    // Verify left nav displays real contract intent
-    const navText = await page.locator('.studio-left-nav').textContent();
-    expect(navText).toContain('doctor appointment booking');
+    // Assert proposed edge line has dashed class
+    const dashedEdge = page.locator('.canvas-edge-line.edge-proposed');
+    expect(await dashedEdge.count()).toBeGreaterThan(0);
+
+    // Assert proposed node has PROPOSED pill
+    expect(await page.locator('.node-proposed-pill:has-text("PROPOSED")').isVisible()).toBe(true);
+
+    // Select slot mutex node to open inspector
+    const mutexNode = page.locator('.canvas-node', { hasText: 'Redis Distributed Slot Lock' });
+    await mutexNode.click();
+    await page.waitForTimeout(300);
+
+    // Assert inspector displays grounded rationale
+    expect(await page.locator('.studio-inspector-drawer').isVisible()).toBe(true);
+    const inspectorText = await page.locator('.studio-inspector-drawer').textContent();
+    expect(inspectorText).toContain('10 minutes');
+
+    // Capture Screenshot A: studio-realrun-appointment-booking.png
+    await saveScreenshot(page, 'studio-realrun-appointment-booking.png');
+    await page.close();
+  });
+
+  // 10. Real Persisted Run B: Collaborative Document Editing with CRDTs
+  it('10. Real Persisted Run B: Collaborative Editing renders CRDT/WebSocket topology and captures studio-realrun-collaborative-editing.png', async () => {
+    const projRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Collaborative Docs Project', description: 'CRDT Sync Engine' }),
+    });
+    const { project } = await projRes.json();
+
+    const collabContract = {
+      id: 'contract-collab-docs',
+      version: '1.0.0',
+      requirement: {
+        id: 'req-collab',
+        rawIntent: 'Real-time collaborative document editing with presence awareness and CRDT state synchronization.',
+        explicitConstraints: ['Eventual state convergence', 'Sub-100ms keystroke broadcast'],
+        declaredTechStack: ['Node.js', 'WebSockets', 'SQLite'],
+        context: { title: 'Collaborative Notes', clientType: 'Collaborative Editors' },
+      },
+      discoveredConcerns: [
+        {
+          id: 'concern-crdt-convergence',
+          requirementId: 'req-collab',
+          title: 'Asynchronous State Divergence',
+          description: 'Concurrent edits across mobile and desktop clients without deterministic merge.',
+          applicabilityReason: 'Distributed peer editing.',
+          dimensions: ['concurrency', 'shared_mutable_state', 'ordering'],
+          supportingKnowledgeIds: [],
+          confidence: 0.95,
+          assumptions: [],
+          unresolvedQuestions: [],
+        },
+      ],
+      decisions: [
+        {
+          id: 'dec-ws-gateway',
+          problemContext: 'WebSocket Real-Time Gateway Broker',
+          consideredOptions: [
+            {
+              id: 'opt-ws',
+              name: 'WebSocket Presence & Operation Gateway',
+              description: 'Bi-directional text stream',
+              tradeoffs: 'Socket connections require state tracking across restarts',
+            },
+          ],
+          selectedOptionId: 'opt-ws',
+          selectedOptionName: 'WebSocket Presence & Operation Gateway',
+          rationale: 'Maintains persistent duplex WebSocket connections for real-time keystroke broadcasting.',
+          evidence: [],
+          assumptions: ['Clients connect via secure WebSocket.'],
+          risksAndTradeoffs: ['Connection state must survive node restarts.'],
+          verificationRequirements: [],
+          reconsiderationTriggers: [],
+        },
+        {
+          id: 'dec-crdt-store',
+          problemContext: 'Conflict-Free Replicated Document Store',
+          consideredOptions: [
+            {
+              id: 'opt-crdt',
+              name: 'CRDT Append-Only Operation Ledger',
+              description: 'Yjs / Automerge state store',
+              tradeoffs: 'Append-only operation logs require periodic compaction',
+            },
+          ],
+          selectedOptionId: 'opt-crdt',
+          selectedOptionName: 'CRDT Append-Only Operation Ledger',
+          rationale: 'Stores commutative document mutations guaranteeing identical convergence across peers.',
+          evidence: [],
+          assumptions: ['Operations commute deterministically.'],
+          risksAndTradeoffs: [],
+          verificationRequirements: [],
+          reconsiderationTriggers: [],
+        },
+      ],
+      invariants: [
+        {
+          id: 'inv-convergence',
+          property: 'All peers must converge to identical document text after all delta operations arrive.',
+          severity: 'critical',
+          blocksCompletion: true,
+          rationale: 'CRDT mathematical convergence property.',
+        },
+      ],
+      verificationSpecs: [],
+      assumptions: [],
+      unresolvedQuestions: ['What compaction schedule is used for CRDT delta operation logs?'],
+      metadata: {
+        status: 'accepted',
+        createdAt: '2026-10-14T08:00:00.000Z',
+        tags: [],
+      },
+    };
+
+    const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rawIntent: collabContract.requirement.rawIntent,
+        explicitConstraints: collabContract.requirement.explicitConstraints,
+        declaredTechStack: collabContract.requirement.declaredTechStack,
+        context: collabContract.requirement.context,
+        contract: collabContract,
+      }),
+    });
+    const { runId } = await runRes.json();
+
+    const graphRes = await fetch(`${baseUrl}/api/runs/${runId}/architecture-graph`);
+    expect(graphRes.status).toBe(200);
+    const graphData = await graphRes.json();
+    expect(graphData.projection.nodes.some((n: any) => n.label.includes('WebSocket'))).toBe(true);
+    expect(graphData.projection.nodes.some((n: any) => n.label.includes('CRDT'))).toBe(true);
+
+    if (!hasChromium || !browser) return;
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${baseUrl}/studio?runId=${runId}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
+
+    // Click on CRDT node to open inspector
+    const crdtNode = page.locator('.canvas-node', { hasText: 'CRDT' });
+    await crdtNode.click();
+    await page.waitForTimeout(300);
+
+    const inspectorContent = await page.locator('.studio-inspector-drawer').textContent();
+    expect(inspectorContent).toContain('commutative document mutations');
+
+    // Capture Screenshot B: studio-realrun-collaborative-editing.png
+    await saveScreenshot(page, 'studio-realrun-collaborative-editing.png');
+    await page.close();
+  });
+
+  // 11. Real Persisted Run C: Minimal CRUD Contact Book (Zero Queues, Zero Caches)
+  it('11. Real Persisted Run C: Minimal CRUD renders service & DB only (no queues/caches) and captures studio-realrun-minimal-crud.png', async () => {
+    const projRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Contact Book Project', description: 'Minimal CRUD REST' }),
+    });
+    const { project } = await projRes.json();
+
+    const crudContract = {
+      id: 'contract-minimal-crud',
+      version: '1.0.0',
+      requirement: {
+        id: 'req-crud',
+        rawIntent: 'A simple contact book CRUD REST API with embedded SQLite database.',
+        explicitConstraints: ['Single process, low memory footprint'],
+        declaredTechStack: ['Node.js', 'SQLite'],
+        context: { title: 'Contact Book CRUD', clientType: 'REST API Clients' },
+      },
+      discoveredConcerns: [],
+      decisions: [
+        {
+          id: 'dec-rest-api',
+          problemContext: 'Express REST API Service',
+          consideredOptions: [
+            {
+              id: 'opt-api',
+              name: 'Stateless REST HTTP Service',
+              description: 'Standard JSON endpoints',
+              tradeoffs: 'Direct process execution without worker queues',
+            },
+          ],
+          selectedOptionId: 'opt-api',
+          selectedOptionName: 'Stateless REST HTTP Service',
+          rationale: 'Serves standard GET/POST/PUT/DELETE contact endpoints.',
+          evidence: [],
+          assumptions: [],
+          risksAndTradeoffs: [],
+          verificationRequirements: [],
+          reconsiderationTriggers: [],
+        },
+        {
+          id: 'dec-sqlite-db',
+          problemContext: 'Embedded SQLite Datastore',
+          consideredOptions: [
+            {
+              id: 'opt-sqlite',
+              name: 'Embedded SQLite Relational Database',
+              description: 'Single-file ACID database',
+              tradeoffs: 'Concurrent writes are serialized by file lock',
+            },
+          ],
+          selectedOptionId: 'opt-sqlite',
+          selectedOptionName: 'Embedded SQLite Relational Database',
+          rationale: 'Persists contact entries in a local file-based SQLite database with zero network overhead.',
+          evidence: [],
+          assumptions: ['Single process access to SQLite file.'],
+          risksAndTradeoffs: ['Concurrent writes are serialized.'],
+          verificationRequirements: [],
+          reconsiderationTriggers: [],
+        },
+      ],
+      invariants: [
+        {
+          id: 'inv-crud-persistence',
+          property: 'Created contacts must be durable and readable until explicitly deleted.',
+          severity: 'critical',
+          blocksCompletion: true,
+          rationale: 'Basic persistence.',
+        },
+      ],
+      verificationSpecs: [],
+      assumptions: [],
+      unresolvedQuestions: [],
+      metadata: {
+        status: 'accepted',
+        createdAt: '2026-10-14T08:00:00.000Z',
+        tags: [],
+      },
+    };
+
+    const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rawIntent: crudContract.requirement.rawIntent,
+        explicitConstraints: crudContract.requirement.explicitConstraints,
+        declaredTechStack: crudContract.requirement.declaredTechStack,
+        context: crudContract.requirement.context,
+        contract: crudContract,
+      }),
+    });
+    const { runId } = await runRes.json();
+
+    const graphRes = await fetch(`${baseUrl}/api/runs/${runId}/architecture-graph`);
+    expect(graphRes.status).toBe(200);
+    const graphData = await graphRes.json();
+    const categories = graphData.projection.nodes.map((n: any) => n.category);
+    expect(categories).not.toContain('queue');
+    expect(categories).not.toContain('cache');
+    expect(categories).not.toContain('worker');
+    expect(categories).toContain('service');
+    expect(categories).toContain('datastore');
+
+    if (!hasChromium || !browser) return;
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${baseUrl}/studio?runId=${runId}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
+
+    // Assert only 3 nodes on canvas (Client, REST API, SQLite DB)
+    const nodeCards = await page.locator('.canvas-node').count();
+    expect(nodeCards).toBe(3);
+
+    // Capture Screenshot C: studio-realrun-minimal-crud.png
+    await saveScreenshot(page, 'studio-realrun-minimal-crud.png');
+    await page.close();
+  });
+
+  // 12. Refresh Does Not Retain Stale Projection
+  it('12. verifies that refreshing a persisted run after contract mutation does not retain a stale projection', async () => {
+    const projRes = await fetch(`${baseUrl}/api/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Refresh Test Project', description: 'Stale detection test' }),
+    });
+    const { project } = await projRes.json();
+
+    const initialContract = {
+      id: 'contract-refresh-test',
+      version: '1.0.0',
+      requirement: {
+        id: 'req-ref',
+        rawIntent: 'Initial service requirement.',
+        explicitConstraints: [],
+        declaredTechStack: ['Node.js'],
+        context: { title: 'Refresh Test' },
+      },
+      discoveredConcerns: [],
+      decisions: [
+        {
+          id: 'dec-initial-svc',
+          problemContext: 'Initial Stateless Service',
+          consideredOptions: [{ id: 'opt-svc', name: 'Initial Stateless Service', description: 'Base service' }],
+          selectedOptionId: 'opt-svc',
+          selectedOptionName: 'Initial Stateless Service',
+          rationale: 'Initial un-mutated rationale.',
+          evidence: [],
+          assumptions: [],
+          risksAndTradeoffs: [],
+          verificationRequirements: [],
+          reconsiderationTriggers: [],
+        },
+      ],
+      invariants: [],
+      verificationSpecs: [],
+      assumptions: [],
+      unresolvedQuestions: [],
+      metadata: { status: 'accepted', createdAt: new Date().toISOString(), tags: [] },
+    };
+
+    const runRes = await fetch(`${baseUrl}/api/projects/${project.id}/runs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rawIntent: initialContract.requirement.rawIntent,
+        contract: initialContract,
+      }),
+    });
+    const { runId } = await runRes.json();
+
+    const g1Res = await fetch(`${baseUrl}/api/runs/${runId}/architecture-graph`);
+    const g1 = await g1Res.json();
+    const fp1 = g1.projection.contractFingerprint;
+
+    // Mutate the contract (editorial change to decision without revision increment)
+    const mutatedContract = structuredClone(initialContract);
+    mutatedContract.decisions[0]!.selectedOptionName = 'Mutated Event Stream Service';
+    mutatedContract.decisions[0]!.rationale = 'Radically mutated decision rationale: switched to event streaming.';
+
+    // Update run in database via direct patch
+    const patchRes = await fetch(`${baseUrl}/api/runs/${runId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contract: mutatedContract,
+      }),
+    });
+    expect(patchRes.ok).toBe(true);
+
+    // Query architecture-graph again: fingerprint MUST change!
+    const g2Res = await fetch(`${baseUrl}/api/runs/${runId}/architecture-graph`);
+    const g2 = await g2Res.json();
+    const fp2 = g2.projection.contractFingerprint;
+
+    expect(fp2).not.toBe(fp1);
+    const mutatedNode = g2.projection.nodes.find((n: any) => n.sourceDecisionIds?.includes('dec-initial-svc') || n.id.includes('initial-svc'));
+    const initialNode = g1.projection.nodes.find((n: any) => n.sourceDecisionIds?.includes('dec-initial-svc') || n.id.includes('initial-svc'));
+    expect(mutatedNode).toBeDefined();
+    expect(initialNode).toBeDefined();
+    expect(mutatedNode.purpose).toBe('Radically mutated decision rationale: switched to event streaming.');
+    expect(mutatedNode.purpose).not.toBe(initialNode.purpose);
+    expect(mutatedNode.label).toBe('Mutated Event Stream Service');
+
+    // In browser, verify Refresh button re-queries without retaining stale state
+    if (!hasChromium || !browser) return;
+
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await page.goto(`${baseUrl}/studio?runId=${runId}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('.studio-canvas-container', { timeout: 10000 });
+
+    // Assert Refresh button is present in header for real run
+    const refreshBtn = page.locator('button[aria-label="Refresh Architecture Graph"]');
+    expect(await refreshBtn.isVisible()).toBe(true);
+    await refreshBtn.click();
+    await page.waitForTimeout(300);
+
+    // Verify node text shows updated component
+    const nodeTexts = await page.locator('.canvas-node').allTextContents();
+    expect(nodeTexts.join(' ')).toContain('Mutated Event Stream Service');
 
     await page.close();
   });

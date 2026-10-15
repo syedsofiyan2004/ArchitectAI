@@ -528,4 +528,83 @@ describe('ArchitectureGraphProjector & Grounding Closure Suite', () => {
     const validation = validateArchitectureGraphProjection(projection, standardContract);
     expect(validation.valid).toBe(true);
   });
+
+  // 12. Concern Description Fingerprint Sensitivity
+  it('12. detects fingerprint change and staleness when concern description changes without revision bump', () => {
+    const projection = projector.projectSync(standardContract, { revision: 1 });
+    const originalFingerprint = projection.contractFingerprint;
+
+    const modified = structuredClone(standardContract);
+    modified.discoveredConcerns[0]!.description = 'Editorial revision to race condition explanation.';
+    const newFingerprint = computeContractFingerprint(modified);
+
+    expect(newFingerprint).not.toBe(originalFingerprint);
+    expect(projector.isProjectionStale(projection, modified, 1)).toBe(true);
+  });
+
+  // 13. Verification Spec Action Fingerprint Sensitivity
+  it('13. detects fingerprint change and staleness when verification spec action changes without revision bump', () => {
+    const projection = projector.projectSync(standardContract, { revision: 1 });
+    const originalFingerprint = projection.contractFingerprint;
+
+    const modified = structuredClone(standardContract);
+    modified.verificationSpecs[0]!.action = 'Send 200 req/s with aggressive burst profile.';
+    const newFingerprint = computeContractFingerprint(modified);
+
+    expect(newFingerprint).not.toBe(originalFingerprint);
+    expect(projector.isProjectionStale(projection, modified, 1)).toBe(true);
+  });
+
+  // 14. Missing Contract Fingerprint Rejection
+  it('14. rejects projection with missing or empty canonical contractFingerprint', () => {
+    const projection = projector.projectSync(standardContract, { revision: 1 });
+    projection.contractFingerprint = '';
+
+    const validation = validateArchitectureGraphProjection(projection, standardContract);
+    expect(validation.valid).toBe(false);
+    expect(
+      validation.errors.some((e) => e.includes('Missing contractFingerprint'))
+    ).toBe(true);
+  });
+
+  // 15. Honest Provider Failure & Timeout Handling
+  it('15. returns honest status: unresolved and groundingStatus: needs_clarification on provider timeout or failure', async () => {
+    const failingProvider = {
+      async generateStructured() {
+        throw new Error('Provider upstream gateway timeout after 30000ms');
+      },
+    } as any;
+
+    const projection = await projector.project(standardContract, {
+      provider: failingProvider,
+      revision: 1,
+    });
+
+    expect(projection.status).toBe('unresolved');
+    expect(projection.groundingStatus).toBe('needs_clarification');
+    expect(projection.nodes).toHaveLength(0);
+    expect(projection.edges).toHaveLength(0);
+    expect(projection.missingSources.length).toBeGreaterThan(0);
+    expect(
+      projection.unresolvedQuestions.some((q) => q.includes('timeout'))
+    ).toBe(true);
+  });
+
+  // 16. Candidate Edge Without Assumptions/Questions Rejection
+  it('16. rejects inferred proposed edge that lacks both assumptions and questions for confirmation', () => {
+    const projection = projector.projectSync(standardContract, { revision: 1 });
+    const proposedEdge = projection.edges.find((e) => e.origin === 'inferred_topology');
+    expect(proposedEdge).toBeDefined();
+
+    if (proposedEdge) {
+      proposedEdge.assumptions = [];
+      proposedEdge.unresolvedQuestions = [];
+    }
+
+    const validation = validateArchitectureGraphProjection(projection, standardContract);
+    expect(validation.valid).toBe(false);
+    expect(
+      validation.errors.some((e) => e.includes('does not carry the assumption or question needed'))
+    ).toBe(true);
+  });
 });

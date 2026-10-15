@@ -505,10 +505,14 @@ export async function createServer(options: ServerOptions = {}) {
           context: newRun.context,
         });
 
+        const finalContract = req.body.contract && typeof req.body.contract === 'object'
+          ? req.body.contract
+          : output.contract;
+
         // Update run state to ANALYSIS_COMPLETE
         runStore.update(runId, {
           state: 'ANALYSIS_COMPLETE',
-          contract: output.contract,
+          contract: finalContract,
           decomposition: output.decomposition,
           dimensionsDetected: output.dimensionsDetected,
           analysisMode: output.mode,
@@ -520,6 +524,7 @@ export async function createServer(options: ServerOptions = {}) {
           runId,
           state: 'ANALYSIS_COMPLETE',
           ...output,
+          contract: finalContract,
         });
       } catch (analysisErr) {
         runStore.update(runId, {
@@ -575,7 +580,10 @@ export async function createServer(options: ServerOptions = {}) {
       const projector = new ArchitectureGraphProjector();
       const revisions = runStore.getContractRevisions(run.id);
       const currentRevision = revisions.length > 0 ? revisions.length : 1;
-      const projection = await projector.project(run.contract, { revision: currentRevision });
+      const projection = await projector.project(run.contract, {
+        revision: currentRevision,
+        provider,
+      });
 
       return res.json({
         success: true,
@@ -583,6 +591,9 @@ export async function createServer(options: ServerOptions = {}) {
         contractId: run.contract.id,
         contractRevision: currentRevision,
         status: projection.status,
+        groundingStatus: projection.groundingStatus,
+        synthesisMode: provider.id === 'deterministic-demo' ? 'deterministic_demo' : 'live_provider',
+        providerName: provider.name,
         contract: run.contract,
         projection,
       });
@@ -692,11 +703,17 @@ export async function createServer(options: ServerOptions = {}) {
   app.patch('/api/runs/:runId', (req: Request, res: Response) => {
     try {
       const runId = req.params.runId;
-      const { state, title } = req.body;
+      const { state, title, contract } = req.body;
       const updates: Partial<ArchitectureRun> = {};
       if (title) updates.title = title;
+      if (contract) updates.contract = contract;
+      if (req.body.contractRevision !== undefined) updates.contractRevision = req.body.contractRevision;
       if (state) {
         const updated = runStore.updateState(runId, state);
+        if (Object.keys(updates).length > 0) {
+          const secondUpdate = runStore.update(runId, updates);
+          return res.json({ success: true, run: secondUpdate });
+        }
         return res.json({ success: true, run: updated });
       }
       const updated = runStore.update(runId, updates);

@@ -3,6 +3,13 @@
 import { z } from 'zod';
 import type { EngineeringContract } from './contract.js';
 
+export const ArchitectureGroundingStatusSchema = z.enum([
+  'supported_by_contract',
+  'proposed_design',
+  'needs_clarification',
+]);
+export type ArchitectureGroundingStatus = z.infer<typeof ArchitectureGroundingStatusSchema>;
+
 export const GraphProjectionStatusSchema = z.enum([
   'valid',
   'stale',
@@ -85,7 +92,7 @@ export const ArchitectureGraphEdgeSchema = z.object({
   source: z.string().min(1, 'Edge source node ID is required'),
   target: z.string().min(1, 'Edge target node ID is required'),
   label: z.string().default(''),
-  protocol: z.string().default('HTTPS'),
+  protocol: z.string().default(''),
   direction: z.enum(['unidirectional', 'bidirectional']).default('unidirectional'),
   isSelfLoop: z.boolean().default(false),
 
@@ -102,6 +109,7 @@ export const ArchitectureGraphEdgeSchema = z.object({
   whySelected: z.string().default(''),
   supportedClaim: z.string().optional(),
   assumptions: z.array(z.string()).default([]),
+  unresolvedQuestions: z.array(z.string()).default([]),
   evidenceReferences: z.array(z.string()).default([]),
   orderingGuarantee: z.string().optional(),
   retryPolicy: z.string().optional(),
@@ -132,6 +140,7 @@ export const ArchitectureGraphProjectionSchema = z.object({
   projectionVersion: z.string().min(1).default('1.0.0'),
   createdAt: z.string(),
   status: GraphProjectionStatusSchema,
+  groundingStatus: ArchitectureGroundingStatusSchema.default('proposed_design'),
 
   // Topology elements (bounded to prevent unbounded allocations)
   nodes: z.array(ArchitectureGraphNodeSchema).max(50, 'Graph exceeds maximum node limit (50)'),
@@ -161,12 +170,6 @@ export interface GraphValidationResult {
   errors: string[];
   warnings: string[];
 }
-
-/**
- * Computes a deterministic canonical content fingerprint for an EngineeringContract.
- * Changes to requirements, decisions, invariants, concerns, specs, or assumptions
- * immediately alter this fingerprint, binding projection validity to contract state.
- */
 export function computeContractFingerprint(contract: EngineeringContract): string {
   const canonicalObj = {
     id: contract.id,
@@ -174,7 +177,8 @@ export function computeContractFingerprint(contract: EngineeringContract): strin
     rawIntent: contract.requirement?.rawIntent || '',
     constraints: (contract.requirement?.explicitConstraints || []).slice().sort(),
     declaredTech: (contract.requirement?.declaredTechStack || []).slice().sort(),
-    context: contract.requirement?.context || {},
+    context: Object.entries(contract.requirement?.context || {})
+      .sort(([a], [b]) => a.localeCompare(b)),
     decisions: (contract.decisions || [])
       .map((d) => ({
         id: d.id,
@@ -182,18 +186,55 @@ export function computeContractFingerprint(contract: EngineeringContract): strin
         optionId: d.selectedOptionId || '',
         optionName: d.selectedOptionName || '',
         rationale: d.rationale,
+        consideredOptions: (d.consideredOptions || [])
+          .map((o) => ({
+            id: o.id,
+            name: o.name,
+            desc: o.description,
+            tradeoffs: o.tradeoffs,
+          }))
+          .sort((a, b) => a.id.localeCompare(b.id)),
+        assumptions: (d.assumptions || []).slice().sort(),
+        risksAndTradeoffs: (d.risksAndTradeoffs || []).slice().sort(),
+        verificationRequirements: (d.verificationRequirements || []).slice().sort(),
+        reconsiderationTriggers: (d.reconsiderationTriggers || []).slice().sort(),
+        evidence: (d.evidence || []).map((e) => e.id).sort(),
       }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     invariants: (contract.invariants || [])
-      .map((i) => ({ id: i.id, prop: i.property, sev: i.severity }))
+      .map((i) => ({
+        id: i.id,
+        prop: i.property,
+        sev: i.severity,
+        blocks: Boolean(i.blocksCompletion),
+        rationale: i.rationale || '',
+      }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     concerns: (contract.discoveredConcerns || [])
-      .map((c) => ({ id: c.id, title: c.title, dims: (c.dimensions || []).slice().sort() }))
+      .map((c) => ({
+        id: c.id,
+        title: c.title,
+        desc: c.description || '',
+        reason: c.applicabilityReason || '',
+        dims: (c.dimensions || []).slice().sort(),
+        knowledge: (c.supportingKnowledgeIds || []).slice().sort(),
+        assumptions: (c.assumptions || []).slice().sort(),
+        questions: (c.unresolvedQuestions || []).slice().sort(),
+      }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     specs: (contract.verificationSpecs || [])
-      .map((s) => ({ id: s.id, target: s.target, exp: s.expectedProperty }))
+      .map((s) => ({
+        id: s.id,
+        target: s.target,
+        desc: s.description || '',
+        setup: s.setup || '',
+        action: s.action || '',
+        exp: s.expectedProperty || '',
+        evidence: (s.evidenceToCollect || []).slice().sort(),
+      }))
       .sort((a, b) => a.id.localeCompare(b.id)),
     assumptions: (contract.assumptions || []).slice().sort(),
+    unresolvedQuestions: (contract.unresolvedQuestions || []).slice().sort(),
   };
 
   const str = JSON.stringify(canonicalObj);
@@ -207,13 +248,43 @@ export function computeContractFingerprint(contract: EngineeringContract): strin
   return `cfp_${hash.toString(16).padStart(16, '0')}`;
 }
 
+export function computeProjectionGroundingStatus(
+  projection: ArchitectureGraphProjection
+): ArchitectureGroundingStatus {
+  if (
+    projection.status !== 'valid' ||
+    (projection.missingSources && projection.missingSources.length > 0)
+  ) {
+    return 'needs_clarification';
+  }
+
+  const hasProposedNode = projection.nodes.some(
+    (n) =>
+      n.origin === 'inferred_topology' ||
+      n.confidence === 'inferred_proposed' ||
+      n.confidence === 'unknown_unresolved'
+  );
+  const hasProposedEdge = projection.edges.some(
+    (e) =>
+      e.origin === 'inferred_topology' ||
+      e.confidence === 'inferred_proposed' ||
+      e.confidence === 'unknown_unresolved'
+  );
+
+  if (hasProposedNode || hasProposedEdge) {
+    return 'proposed_design';
+  }
+
+  return 'supported_by_contract';
+}
+
 const STOP_WORDS = new Set([
   'the', 'and', 'for', 'with', 'this', 'that', 'from', 'into', 'each',
   'across', 'will', 'must', 'should', 'have', 'been', 'were', 'what',
   'when', 'where', 'which', 'their', 'there', 'they', 'than', 'then'
 ]);
 
-function extractMeaningfulTokens(text: string): Set<string> {
+export function extractMeaningfulTokens(text: string): Set<string> {
   const tokens = text
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, ' ')
@@ -232,6 +303,7 @@ function extractMeaningfulTokens(text: string): Set<string> {
  * - Disallows claiming origin=contract_decision or confidence=architectural_decision without
  *   substantive semantic relevance in the referenced decision.
  * - Disallows silent introduction of ungrounded technologies, capacity figures, or SLAs.
+ * - Enforces that candidate edges are marked proposed and carry assumptions/questions for confirmation.
  */
 export function validateArchitectureGraphProjection(
   projection: ArchitectureGraphProjection,
@@ -242,11 +314,13 @@ export function validateArchitectureGraphProjection(
 
   // 1. Unique Node IDs
   const nodeIds = new Set<string>();
+  const nodesMap = new Map<string, ArchitectureGraphNode>();
   for (const node of projection.nodes) {
     if (nodeIds.has(node.id)) {
       errors.push(`Duplicate node ID detected: "${node.id}"`);
     }
     nodeIds.add(node.id);
+    nodesMap.set(node.id, node);
   }
 
   // 2. Unique Edge IDs & Zero Dangling Edges
@@ -283,7 +357,11 @@ export function validateArchitectureGraphProjection(
     }
 
     const expectedFingerprint = computeContractFingerprint(contract);
-    if (projection.contractFingerprint && projection.contractFingerprint !== expectedFingerprint) {
+    if (!projection.contractFingerprint || projection.contractFingerprint.trim() === '') {
+      errors.push(
+        'Missing contractFingerprint: projection claiming validity must include a non-empty canonical contract fingerprint'
+      );
+    } else if (projection.contractFingerprint !== expectedFingerprint) {
       errors.push(
         `Contract content fingerprint mismatch: projection fingerprint "${projection.contractFingerprint}" does not match contract content fingerprint "${expectedFingerprint}"`
       );
@@ -299,7 +377,10 @@ export function validateArchitectureGraphProjection(
       contract.requirement?.rawIntent || '',
       ...(contract.requirement?.declaredTechStack || []),
       ...(contract.requirement?.explicitConstraints || []),
-      ...contract.decisions.map((d) => `${d.problemContext} ${d.selectedOptionName || ''} ${d.rationale}`),
+      ...contract.decisions.map(
+        (d) =>
+          `${d.problemContext} ${d.selectedOptionName || ''} ${d.rationale} ${(d.assumptions || []).join(' ')} ${(d.risksAndTradeoffs || []).join(' ')} ${(d.consideredOptions || []).map((o) => `${o.name} ${o.description}`).join(' ')}`
+      ),
       ...contract.invariants.map((i) => i.property),
       ...(contract.assumptions || []),
     ].join(' ').toLowerCase();
@@ -406,8 +487,68 @@ export function validateArchitectureGraphProjection(
         }
       }
 
-      if (edge.origin === 'contract_decision' && (!edge.sourceDecisionIds || edge.sourceDecisionIds.length === 0)) {
-        errors.push(`Edge "${edge.id}" claims origin "contract_decision" but has no sourceDecisionIds`);
+      // Edge Rule 1: Confirmed contract edges require explicit source decisions
+      if (edge.origin === 'contract_decision') {
+        if (!edge.sourceDecisionIds || edge.sourceDecisionIds.length === 0) {
+          errors.push(`Edge "${edge.id}" claims origin "contract_decision" but has no sourceDecisionIds`);
+        } else {
+          // Verify that referenced decision establishes relationship between source and target
+          const srcNode = nodesMap.get(edge.source);
+          const tgtNode = nodesMap.get(edge.target);
+          if (srcNode && tgtNode) {
+            const srcTokens = extractMeaningfulTokens(`${srcNode.label} ${srcNode.category}`);
+            const tgtTokens = extractMeaningfulTokens(`${tgtNode.label} ${tgtNode.category}`);
+            let establishesRel = false;
+
+            for (const dId of edge.sourceDecisionIds) {
+              const decision = decisionsMap.get(dId);
+              if (!decision) continue;
+              const dText = `${decision.problemContext} ${decision.selectedOptionName || ''} ${decision.rationale} ${(decision.consideredOptions || []).map((o) => `${o.name} ${o.description}`).join(' ')}`.toLowerCase();
+
+              const srcMatch = Array.from(srcTokens).some((t) => dText.includes(t));
+              const tgtMatch = Array.from(tgtTokens).some((t) => dText.includes(t));
+
+              if (srcMatch && tgtMatch) {
+                establishesRel = true;
+                break;
+              }
+            }
+
+            if (!establishesRel) {
+              errors.push(
+                `Edge "${edge.id}" claims origin "contract_decision" with decisions [${edge.sourceDecisionIds.join(', ')}], but referenced decision text does not explicitly establish relationship between "${srcNode.label}" and "${tgtNode.label}"`
+              );
+            }
+          }
+        }
+      }
+
+      // Edge Rule 2: Proposed edges must carry assumptions or unresolved questions
+      if (edge.origin === 'inferred_topology' || edge.confidence === 'inferred_proposed') {
+        const hasAssumptions = Array.isArray(edge.assumptions) && edge.assumptions.length > 0;
+        const hasQuestions = Array.isArray(edge.unresolvedQuestions) && edge.unresolvedQuestions.length > 0;
+        if (!hasAssumptions && !hasQuestions) {
+          errors.push(
+            `Edge "${edge.id}" is marked proposed/inferred but does not carry the assumption or question needed for confirmation`
+          );
+        }
+
+        // Edge Rule 3: Inferred edges must not invent concrete protocol details
+        if (
+          edge.protocol &&
+          edge.protocol.trim() !== '' &&
+          !edge.protocol.toLowerCase().includes('proposed') &&
+          !edge.protocol.toLowerCase().includes('unspecified')
+        ) {
+          const protoTokens = Array.from(extractMeaningfulTokens(edge.protocol));
+          const protoGrounded = protoTokens.some((t) => contractAllText.includes(t)) ||
+            (edge.assumptions || []).some((a) => a.toLowerCase().includes(edge.protocol.toLowerCase()));
+          if (!protoGrounded) {
+            errors.push(
+              `Edge "${edge.id}" specifies protocol "${edge.protocol}" without contract support. Inferred edges must not invent protocol details.`
+            );
+          }
+        }
       }
     }
   }

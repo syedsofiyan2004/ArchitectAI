@@ -993,10 +993,20 @@
   transition: stroke 150ms ease, stroke-width 150ms ease;
 }
 
+.canvas-edge-line.edge-proposed {
+  stroke: #64748b;
+  stroke-dasharray: 6 4;
+}
+
 .canvas-edge-line.selected {
   stroke: #38bdf8;
   stroke-width: 2.5px;
   filter: drop-shadow(0 0 6px rgba(56, 189, 248, 0.5));
+}
+
+.canvas-edge-line.edge-proposed.selected {
+  stroke: #38bdf8;
+  stroke-dasharray: 6 4;
 }
 
 .canvas-edge-pulse {
@@ -1033,11 +1043,34 @@
   stroke: #38bdf8;
 }
 
+.edge-badge-bg.edge-badge-proposed {
+  stroke: rgba(148, 163, 184, 0.45);
+  stroke-dasharray: 4 2;
+}
+
 .edge-badge-text {
   fill: #cbd5e1;
   font-size: 9px;
   font-weight: 600;
   pointer-events: none;
+}
+
+.edge-badge-text.badge-proposed {
+  fill: #94a3b8;
+  font-style: italic;
+}
+
+.node-proposed-pill {
+  display: inline-block;
+  font-size: 8px;
+  font-weight: 700;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  border-radius: 3px;
+  padding: 1px 4px;
+  margin-left: 4px;
+  letter-spacing: 0.5px;
 }
 
 /* Simulated Request Packets */

@@ -29,6 +29,10 @@ interface StudioHeaderProps {
   activeContractId?: string;
   onSelectContract?: (contractId: string) => void;
   simulationAvailable?: boolean;
+  groundingStatus?: 'supported_by_contract' | 'proposed_design' | 'needs_clarification';
+  synthesisMode?: 'deterministic_demo' | 'live_provider';
+  onRefresh?: () => void;
+  isRealRun?: boolean;
 }
 
 export const StudioHeader: React.FC<StudioHeaderProps> = ({
@@ -46,6 +50,10 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
   activeContractId = 'contract-rate-limiter',
   onSelectContract,
   simulationAvailable = false,
+  groundingStatus,
+  synthesisMode,
+  onRefresh,
+  isRealRun = false,
 }) => {
   return (
     <header className="studio-header">
@@ -70,9 +78,57 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             <div className="studio-brand-row">
               <span className="studio-brand-name">ArchitectAI</span>
               <span className="studio-sub-badge font-mono">STUDIO</span>
-              <span className="studio-demo-pill font-mono" title="Fictional prototype scenario">
-                DEMO
-              </span>
+              {isRealRun ? (
+                <span
+                  className="studio-demo-pill font-mono"
+                  style={{ background: '#0284c7', color: '#f0fdf4', border: '1px solid #38bdf8' }}
+                  title="Live Persisted Architecture Run"
+                >
+                  LIVE RUN
+                </span>
+              ) : (
+                <span className="studio-demo-pill font-mono" title="Curated demonstration scenario">
+                  DEMO
+                </span>
+              )}
+              {groundingStatus && (
+                <span
+                  className="font-mono"
+                  style={{
+                    fontSize: '9px',
+                    fontWeight: 700,
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    letterSpacing: '0.4px',
+                    color:
+                      groundingStatus === 'supported_by_contract'
+                        ? '#34d399'
+                        : groundingStatus === 'proposed_design'
+                        ? '#38bdf8'
+                        : '#fbbf24',
+                    background:
+                      groundingStatus === 'supported_by_contract'
+                        ? 'rgba(16, 185, 129, 0.15)'
+                        : groundingStatus === 'proposed_design'
+                        ? 'rgba(56, 189, 248, 0.15)'
+                        : 'rgba(245, 158, 11, 0.15)',
+                    border: `1px solid ${
+                      groundingStatus === 'supported_by_contract'
+                        ? 'rgba(16, 185, 129, 0.4)'
+                        : groundingStatus === 'proposed_design'
+                        ? 'rgba(56, 189, 248, 0.4)'
+                        : 'rgba(245, 158, 11, 0.4)'
+                    }`,
+                  }}
+                  title={`Grounding Status: ${groundingStatus}`}
+                >
+                  {groundingStatus === 'supported_by_contract'
+                    ? 'SUPPORTED BY CONTRACT'
+                    : groundingStatus === 'proposed_design'
+                    ? 'PROPOSED DESIGN'
+                    : 'NEEDS CLARIFICATION'}
+                </span>
+              )}
             </div>
             <div className="studio-project-title" title={`${projectName} • ${requirementTitle}`}>
               <span className="text-secondary font-mono">{projectName}</span>
@@ -199,6 +255,20 @@ export const StudioHeader: React.FC<StudioHeaderProps> = ({
             <Maximize2 size={13} />
           </button>
         </div>
+
+        {onRefresh && (
+          <button
+            type="button"
+            className="studio-btn-icon font-mono"
+            onClick={onRefresh}
+            title="Refresh architecture graph from contract"
+            aria-label="Refresh Architecture Graph"
+            style={{ width: 'auto', padding: '0 8px', gap: '4px', fontSize: '11px', display: 'flex', alignItems: 'center' }}
+          >
+            <RotateCcw size={12} />
+            <span>Refresh</span>
+          </button>
+        )}
 
         <div className="studio-divider" />
 
